@@ -1,0 +1,11 @@
+# Local artifacts
+*.generated.yaml
+*.tgz
+*.zip
+
+# OS
+.DS_Store
+
+# Tooling
+.vscode/
+.idea/

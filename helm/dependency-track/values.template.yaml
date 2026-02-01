@@ -1,0 +1,42 @@
+# Minimal values for dependency-track/dependency-track
+#
+# IMPORTANT:
+# - This file contains NO secret values.
+# - Secrets are created in-cluster and referenced via apiServer.extraEnvFrom.
+#
+# Rendering strategy used by the workflow:
+# - A values.generated.yaml is emitted at runtime using environment variables.
+# - This template is for human review and optional manual use.
+
+common:
+  image:
+    # Override all images to Nexus (registry only); keep repositories as chart defaults unless you have a different layout.
+    registry: ${NEXUS_DOCKER_REGISTRY}
+    pullSecrets:
+      - name: ${IMAGE_PULL_SECRET_NAME}
+
+apiServer:
+  # Dependency-Track API server image.
+  image:
+    # If your Nexus path differs, set repository explicitly (e.g. "dependencytrack/apiserver").
+    repository: dependencytrack/apiserver
+    # Leave empty to default to the chart AppVersion.
+    tag: ${DTRACK_IMAGE_TAG}
+  # Load all sensitive application configuration from a Secret.
+  extraEnvFrom:
+    - secretRef:
+        name: dependency-track-app-config
+
+frontend:
+  image:
+    repository: dependencytrack/frontend
+    tag: ${DTRACK_IMAGE_TAG}
+
+ingress:
+  enabled: true
+  hostname: ${DTRACK_INGRESS_HOST}
+  ingressClassName: traefik
+  tls:
+    - secretName: ${INGRESS_TLS_SECRET_NAME}
+      hosts:
+        - ${DTRACK_INGRESS_HOST}
