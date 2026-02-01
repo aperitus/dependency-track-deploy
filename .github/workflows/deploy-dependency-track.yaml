@@ -1,10 +1,27 @@
 name: Deploy Dependency-Track (AKS)
 
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment (must exist as a GitHub Environment)"
+        type: choice
+        required: true
+        options:
+          - dev
+          - prod
+      use_admin_credentials:
+        description: "Use AKS admin credentials (break-glass). Default false."
+        type: boolean
+        required: false
+        default: false
+      helm_timeout:
+        description: "Helm timeout. Examples: 10 (minutes), 10m, 600s, 1h"
+        required: false
+        default: "15m"
 
 concurrency:
-  group: dependency-track-deploy
+  group: dependency-track-${{ inputs.environment }}
   cancel-in-progress: false
 
 permissions:
@@ -12,280 +29,472 @@ permissions:
 
 jobs:
   deploy:
+    name: Deploy
     runs-on: self-hosted
+    environment: ${{ inputs.environment }}
     timeout-minutes: 30
+
+    env:
+      # Keep Azure CLI state isolated and avoid cross-job contamination.
+      AZURE_CONFIG_DIR: ${{ runner.temp }}/.azure
+      KUBECONFIG: ${{ runner.temp }}/kubeconfig
+
+      # Helm timeout (validated/normalised in a step below)
+      HELM_TIMEOUT: ${{ inputs.helm_timeout }}
+
+      # Defaults (non-secret)
+      DTRACK_NAMESPACE: dependency-track
+      DTRACK_RELEASE_NAME: dependency-track
+      DTRACK_INGRESS_HOST: dtrack.logiki.co.uk
+      DTRACK_INGRESS_CLASS_NAME: traefik
+
+      # Helm chart
+      DTRACK_HELM_REPO_URL: https://dependencytrack.github.io/helm-charts
+      DTRACK_CHART_VERSION: 0.41.0
+
+      # Secrets / names
+      IMAGE_PULL_SECRET_NAME: nexus-pull
+      INGRESS_TLS_SECRET_NAME: dtrack-wildcard-tls
+      DTRACK_APP_CONFIG_SECRET_NAME: dependency-track-app-config
+
+      # Images
+      # - DTRACK_IMAGE_REGISTRY is defaulted to NEXUS_DOCKER_SERVER when empty.
+      DTRACK_IMAGE_REGISTRY: ""
+      DTRACK_APISERVER_IMAGE_REPOSITORY: dependencytrack/apiserver
+      DTRACK_FRONTEND_IMAGE_REPOSITORY: dependencytrack/frontend
+      DTRACK_APISERVER_IMAGE_REGISTRY: ""   # optional override per-component
+      DTRACK_FRONTEND_IMAGE_REGISTRY: ""   # optional override per-component
+      DTRACK_APISERVER_IMAGE_TAG: ""       # default: chart appVersion
+      DTRACK_FRONTEND_IMAGE_TAG: ""        # default: chart appVersion
+
+      # Optional: frontend base URL override (usually leave empty)
+      DTRACK_FRONTEND_API_BASE_URL: ""
+
+      # Optional: secretKey behavior
+      DTRACK_SECRET_KEY_CREATE: "true"     # "true" or "false"
+      DTRACK_SECRET_KEY_EXISTING_SECRET_NAME: ""
+
+      # Optional: ingress annotations JSON (must be a JSON object)
+      DTRACK_INGRESS_ANNOTATIONS_JSON: "{}"
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # -------------------------------------------------------------------
-      # Pre-run: resolve inputs (prefer vars.<NAME> then secrets.<NAME>)
-      # -------------------------------------------------------------------
-      - name: Resolve inputs (vars -> secrets)
-        id: resolve
+      # ----------------------------------------------------------------------
+      # Reused patterns from deploy-traefik.yaml (tested on your runner)
+      # ----------------------------------------------------------------------
+
+      - name: Verify toolchain on runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v az >/dev/null
+          command -v kubectl >/dev/null
+          command -v helm >/dev/null
+          command -v python3 >/dev/null
+          command -v kubelogin >/dev/null
+          command -v openssl >/dev/null
+          az version
+          kubectl version --client=true
+          helm version
+          kubelogin --version || true
+
+      - name: Resolve preferred sources (vars -> secrets)
         shell: bash
         env:
-          # Azure / AKS
-          RESOLVE_VAR_DEPLOY_CLIENT_ID: ${{ vars.DEPLOY_CLIENT_ID }}
-          RESOLVE_SECRET_DEPLOY_CLIENT_ID: ${{ secrets.DEPLOY_CLIENT_ID }}
-          RESOLVE_VAR_DEPLOY_TENANT_ID: ${{ vars.DEPLOY_TENANT_ID }}
-          RESOLVE_SECRET_DEPLOY_TENANT_ID: ${{ secrets.DEPLOY_TENANT_ID }}
-          RESOLVE_VAR_DEPLOY_SUBSCRIPTION_ID: ${{ vars.DEPLOY_SUBSCRIPTION_ID }}
-          RESOLVE_SECRET_DEPLOY_SUBSCRIPTION_ID: ${{ secrets.DEPLOY_SUBSCRIPTION_ID }}
-          RESOLVE_VAR_DEPLOY_SECRET: ${{ vars.DEPLOY_SECRET }}
-          RESOLVE_SECRET_DEPLOY_SECRET: ${{ secrets.DEPLOY_SECRET }}
-          RESOLVE_VAR_AKS_RESOURCE_GROUP: ${{ vars.AKS_RESOURCE_GROUP }}
-          RESOLVE_SECRET_AKS_RESOURCE_GROUP: ${{ secrets.AKS_RESOURCE_GROUP }}
-          RESOLVE_VAR_AKS_CLUSTER_NAME: ${{ vars.AKS_CLUSTER_NAME }}
-          RESOLVE_SECRET_AKS_CLUSTER_NAME: ${{ secrets.AKS_CLUSTER_NAME }}
+          # Azure
+          DEPLOY_CLIENT_ID__VAR: ${{ vars.DEPLOY_CLIENT_ID }}
+          DEPLOY_CLIENT_ID__SECRET: ${{ secrets.DEPLOY_CLIENT_ID }}
+          DEPLOY_SECRET__VAR: ${{ vars.DEPLOY_SECRET }}
+          DEPLOY_SECRET__SECRET: ${{ secrets.DEPLOY_SECRET }}
+          AZURE_TENANT_ID__VAR: ${{ vars.AZURE_TENANT_ID }}
+          AZURE_TENANT_ID__SECRET: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID__VAR: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+          AZURE_SUBSCRIPTION_ID__SECRET: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-          # Nexus registry
-          RESOLVE_VAR_NEXUS_DOCKER_REGISTRY: ${{ vars.NEXUS_DOCKER_REGISTRY }}
-          RESOLVE_SECRET_NEXUS_DOCKER_REGISTRY: ${{ secrets.NEXUS_DOCKER_REGISTRY }}
-          RESOLVE_VAR_NEXUS_DOCKER_USERNAME: ${{ vars.NEXUS_DOCKER_USERNAME }}
-          RESOLVE_SECRET_NEXUS_DOCKER_USERNAME: ${{ secrets.NEXUS_DOCKER_USERNAME }}
-          RESOLVE_VAR_NEXUS_DOCKER_PASSWORD: ${{ vars.NEXUS_DOCKER_PASSWORD }}
-          RESOLVE_SECRET_NEXUS_DOCKER_PASSWORD: ${{ secrets.NEXUS_DOCKER_PASSWORD }}
-          RESOLVE_VAR_IMAGE_PULL_SECRET_NAME: ${{ vars.IMAGE_PULL_SECRET_NAME }}
-          RESOLVE_SECRET_IMAGE_PULL_SECRET_NAME: ${{ secrets.IMAGE_PULL_SECRET_NAME }}
+          # AKS
+          AKS_RESOURCE_GROUP__VAR: ${{ vars.AKS_RESOURCE_GROUP }}
+          AKS_RESOURCE_GROUP__SECRET: ${{ secrets.AKS_RESOURCE_GROUP }}
+          AKS_CLUSTER_NAME__VAR: ${{ vars.AKS_CLUSTER_NAME }}
+          AKS_CLUSTER_NAME__SECRET: ${{ secrets.AKS_CLUSTER_NAME }}
 
-          # TLS
-          RESOLVE_VAR_INGRESS_TLS_SECRET_NAME: ${{ vars.INGRESS_TLS_SECRET_NAME }}
-          RESOLVE_SECRET_INGRESS_TLS_SECRET_NAME: ${{ secrets.INGRESS_TLS_SECRET_NAME }}
-          RESOLVE_VAR_WILDCARD_CRT: ${{ vars.WILDCARD_CRT }}
-          RESOLVE_SECRET_WILDCARD_CRT: ${{ secrets.WILDCARD_CRT }}
-          RESOLVE_VAR_WILDCARD_KEY: ${{ vars.WILDCARD_KEY }}
-          RESOLVE_SECRET_WILDCARD_KEY: ${{ secrets.WILDCARD_KEY }}
+          # Nexus registry creds
+          NEXUS_DOCKER_SERVER__VAR: ${{ vars.NEXUS_DOCKER_SERVER }}
+          NEXUS_DOCKER_SERVER__SECRET: ${{ secrets.NEXUS_DOCKER_SERVER }}
+          NEXUS_DOCKER_USERNAME__VAR: ${{ vars.NEXUS_DOCKER_USERNAME }}
+          NEXUS_DOCKER_USERNAME__SECRET: ${{ secrets.NEXUS_DOCKER_USERNAME }}
+          NEXUS_DOCKER_PASSWORD__VAR: ${{ vars.NEXUS_DOCKER_PASSWORD }}
+          NEXUS_DOCKER_PASSWORD__SECRET: ${{ secrets.NEXUS_DOCKER_PASSWORD }}
 
-          # Dependency-Track
-          RESOLVE_VAR_DTRACK_DB_URL: ${{ vars.DTRACK_DB_URL }}
-          RESOLVE_SECRET_DTRACK_DB_URL: ${{ secrets.DTRACK_DB_URL }}
-          RESOLVE_VAR_DTRACK_INGRESS_HOST: ${{ vars.DTRACK_INGRESS_HOST }}
-          RESOLVE_SECRET_DTRACK_INGRESS_HOST: ${{ secrets.DTRACK_INGRESS_HOST }}
-          RESOLVE_VAR_DTRACK_IMAGE_TAG: ${{ vars.DTRACK_IMAGE_TAG }}
-          RESOLVE_SECRET_DTRACK_IMAGE_TAG: ${{ secrets.DTRACK_IMAGE_TAG }}
+          # K8s secret names
+          IMAGE_PULL_SECRET_NAME__VAR: ${{ vars.IMAGE_PULL_SECRET_NAME }}
+          IMAGE_PULL_SECRET_NAME__SECRET: ${{ secrets.IMAGE_PULL_SECRET_NAME }}
+          INGRESS_TLS_SECRET_NAME__VAR: ${{ vars.INGRESS_TLS_SECRET_NAME }}
+          INGRESS_TLS_SECRET_NAME__SECRET: ${{ secrets.INGRESS_TLS_SECRET_NAME }}
+          DTRACK_APP_CONFIG_SECRET_NAME__VAR: ${{ vars.DTRACK_APP_CONFIG_SECRET_NAME }}
+          DTRACK_APP_CONFIG_SECRET_NAME__SECRET: ${{ secrets.DTRACK_APP_CONFIG_SECRET_NAME }}
 
-          # Helm
-          RESOLVE_VAR_DTRACK_HELM_REPO_URL: ${{ vars.DTRACK_HELM_REPO_URL }}
-          RESOLVE_SECRET_DTRACK_HELM_REPO_URL: ${{ secrets.DTRACK_HELM_REPO_URL }}
-          RESOLVE_VAR_DTRACK_CHART_VERSION: ${{ vars.DTRACK_CHART_VERSION }}
-          RESOLVE_SECRET_DTRACK_CHART_VERSION: ${{ secrets.DTRACK_CHART_VERSION }}
-          RESOLVE_VAR_HELM_TIMEOUT: ${{ vars.HELM_TIMEOUT }}
-          RESOLVE_SECRET_HELM_TIMEOUT: ${{ secrets.HELM_TIMEOUT }}
+          # Wildcard TLS material
+          WILDCARD_CRT__VAR: ${{ vars.WILDCARD_CRT }}
+          WILDCARD_CRT__SECRET: ${{ secrets.WILDCARD_CRT }}
+          WILDCARD_KEY__VAR: ${{ vars.WILDCARD_KEY }}
+          WILDCARD_KEY__SECRET: ${{ secrets.WILDCARD_KEY }}
+
+          # Chart + ingress parameters
+          DTRACK_NAMESPACE__VAR: ${{ vars.DTRACK_NAMESPACE }}
+          DTRACK_NAMESPACE__SECRET: ${{ secrets.DTRACK_NAMESPACE }}
+          DTRACK_RELEASE_NAME__VAR: ${{ vars.DTRACK_RELEASE_NAME }}
+          DTRACK_RELEASE_NAME__SECRET: ${{ secrets.DTRACK_RELEASE_NAME }}
+          DTRACK_INGRESS_HOST__VAR: ${{ vars.DTRACK_INGRESS_HOST }}
+          DTRACK_INGRESS_HOST__SECRET: ${{ secrets.DTRACK_INGRESS_HOST }}
+          DTRACK_INGRESS_CLASS_NAME__VAR: ${{ vars.DTRACK_INGRESS_CLASS_NAME }}
+          DTRACK_INGRESS_CLASS_NAME__SECRET: ${{ secrets.DTRACK_INGRESS_CLASS_NAME }}
+          DTRACK_HELM_REPO_URL__VAR: ${{ vars.DTRACK_HELM_REPO_URL }}
+          DTRACK_HELM_REPO_URL__SECRET: ${{ secrets.DTRACK_HELM_REPO_URL }}
+          DTRACK_CHART_VERSION__VAR: ${{ vars.DTRACK_CHART_VERSION }}
+          DTRACK_CHART_VERSION__SECRET: ${{ secrets.DTRACK_CHART_VERSION }}
+
+          # Images
+          DTRACK_IMAGE_REGISTRY__VAR: ${{ vars.DTRACK_IMAGE_REGISTRY }}
+          DTRACK_IMAGE_REGISTRY__SECRET: ${{ secrets.DTRACK_IMAGE_REGISTRY }}
+          DTRACK_APISERVER_IMAGE_REPOSITORY__VAR: ${{ vars.DTRACK_APISERVER_IMAGE_REPOSITORY }}
+          DTRACK_APISERVER_IMAGE_REPOSITORY__SECRET: ${{ secrets.DTRACK_APISERVER_IMAGE_REPOSITORY }}
+          DTRACK_FRONTEND_IMAGE_REPOSITORY__VAR: ${{ vars.DTRACK_FRONTEND_IMAGE_REPOSITORY }}
+          DTRACK_FRONTEND_IMAGE_REPOSITORY__SECRET: ${{ secrets.DTRACK_FRONTEND_IMAGE_REPOSITORY }}
+          DTRACK_APISERVER_IMAGE_TAG__VAR: ${{ vars.DTRACK_APISERVER_IMAGE_TAG }}
+          DTRACK_APISERVER_IMAGE_TAG__SECRET: ${{ secrets.DTRACK_APISERVER_IMAGE_TAG }}
+          DTRACK_FRONTEND_IMAGE_TAG__VAR: ${{ vars.DTRACK_FRONTEND_IMAGE_TAG }}
+          DTRACK_FRONTEND_IMAGE_TAG__SECRET: ${{ secrets.DTRACK_FRONTEND_IMAGE_TAG }}
+          DTRACK_APISERVER_IMAGE_REGISTRY__VAR: ${{ vars.DTRACK_APISERVER_IMAGE_REGISTRY }}
+          DTRACK_APISERVER_IMAGE_REGISTRY__SECRET: ${{ secrets.DTRACK_APISERVER_IMAGE_REGISTRY }}
+          DTRACK_FRONTEND_IMAGE_REGISTRY__VAR: ${{ vars.DTRACK_FRONTEND_IMAGE_REGISTRY }}
+          DTRACK_FRONTEND_IMAGE_REGISTRY__SECRET: ${{ secrets.DTRACK_FRONTEND_IMAGE_REGISTRY }}
+
+          # Optional
+          DTRACK_INGRESS_ANNOTATIONS_JSON__VAR: ${{ vars.DTRACK_INGRESS_ANNOTATIONS_JSON }}
+          DTRACK_INGRESS_ANNOTATIONS_JSON__SECRET: ${{ secrets.DTRACK_INGRESS_ANNOTATIONS_JSON }}
+          DTRACK_SECRET_KEY_CREATE__VAR: ${{ vars.DTRACK_SECRET_KEY_CREATE }}
+          DTRACK_SECRET_KEY_CREATE__SECRET: ${{ secrets.DTRACK_SECRET_KEY_CREATE }}
+          DTRACK_SECRET_KEY_EXISTING_SECRET_NAME__VAR: ${{ vars.DTRACK_SECRET_KEY_EXISTING_SECRET_NAME }}
+          DTRACK_SECRET_KEY_EXISTING_SECRET_NAME__SECRET: ${{ secrets.DTRACK_SECRET_KEY_EXISTING_SECRET_NAME }}
+          DTRACK_FRONTEND_API_BASE_URL__VAR: ${{ vars.DTRACK_FRONTEND_API_BASE_URL }}
+          DTRACK_FRONTEND_API_BASE_URL__SECRET: ${{ secrets.DTRACK_FRONTEND_API_BASE_URL }}
+
+          # Optional: app config keys (external DB etc.)
+          ALPINE_DATABASE_MODE__VAR: ${{ vars.ALPINE_DATABASE_MODE }}
+          ALPINE_DATABASE_MODE__SECRET: ${{ secrets.ALPINE_DATABASE_MODE }}
+          ALPINE_DATABASE_URL__VAR: ${{ vars.ALPINE_DATABASE_URL }}
+          ALPINE_DATABASE_URL__SECRET: ${{ secrets.ALPINE_DATABASE_URL }}
+          ALPINE_DATABASE_USERNAME__VAR: ${{ vars.ALPINE_DATABASE_USERNAME }}
+          ALPINE_DATABASE_USERNAME__SECRET: ${{ secrets.ALPINE_DATABASE_USERNAME }}
+          ALPINE_DATABASE_PASSWORD__VAR: ${{ vars.ALPINE_DATABASE_PASSWORD }}
+          ALPINE_DATABASE_PASSWORD__SECRET: ${{ secrets.ALPINE_DATABASE_PASSWORD }}
 
         run: |
           set -euo pipefail
-          source scripts/resolve_inputs.sh
+          ./scripts/resolve-preferred-env.sh \
+            DEPLOY_CLIENT_ID DEPLOY_SECRET AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID \
+            AKS_RESOURCE_GROUP AKS_CLUSTER_NAME \
+            NEXUS_DOCKER_SERVER NEXUS_DOCKER_USERNAME NEXUS_DOCKER_PASSWORD \
+            IMAGE_PULL_SECRET_NAME INGRESS_TLS_SECRET_NAME DTRACK_APP_CONFIG_SECRET_NAME \
+            WILDCARD_CRT WILDCARD_KEY \
+            DTRACK_NAMESPACE DTRACK_RELEASE_NAME DTRACK_INGRESS_HOST DTRACK_INGRESS_CLASS_NAME \
+            DTRACK_HELM_REPO_URL DTRACK_CHART_VERSION \
+            DTRACK_IMAGE_REGISTRY DTRACK_APISERVER_IMAGE_REPOSITORY DTRACK_FRONTEND_IMAGE_REPOSITORY \
+            DTRACK_APISERVER_IMAGE_TAG DTRACK_FRONTEND_IMAGE_TAG \
+            DTRACK_APISERVER_IMAGE_REGISTRY DTRACK_FRONTEND_IMAGE_REGISTRY \
+            DTRACK_INGRESS_ANNOTATIONS_JSON \
+            DTRACK_SECRET_KEY_CREATE DTRACK_SECRET_KEY_EXISTING_SECRET_NAME \
+            DTRACK_FRONTEND_API_BASE_URL \
+            ALPINE_DATABASE_MODE ALPINE_DATABASE_URL ALPINE_DATABASE_USERNAME ALPINE_DATABASE_PASSWORD
 
-          # Defaults (safe)
-          resolve_pref_var_then_secret DTRACK_HELM_REPO_URL false "https://dependencytrack.github.io/helm-charts"
-          resolve_pref_var_then_secret DTRACK_CHART_VERSION false "0.41.0"
-          resolve_pref_var_then_secret DTRACK_INGRESS_HOST false "dtrack.logiki.co.uk"
-          resolve_pref_var_then_secret HELM_TIMEOUT false "15m"
-
-          # Required: Azure / AKS
-          resolve_pref_var_then_secret DEPLOY_CLIENT_ID false
-          resolve_pref_var_then_secret DEPLOY_TENANT_ID false
-          resolve_pref_var_then_secret DEPLOY_SUBSCRIPTION_ID false
-          resolve_pref_var_then_secret DEPLOY_SECRET true
-          resolve_pref_var_then_secret AKS_RESOURCE_GROUP false
-          resolve_pref_var_then_secret AKS_CLUSTER_NAME false
-
-          # Required: Nexus registry
-          resolve_pref_var_then_secret NEXUS_DOCKER_REGISTRY false
-          resolve_pref_var_then_secret NEXUS_DOCKER_USERNAME true
-          resolve_pref_var_then_secret NEXUS_DOCKER_PASSWORD true
-          resolve_pref_var_then_secret IMAGE_PULL_SECRET_NAME false
-
-          # Required: TLS
-          resolve_pref_var_then_secret INGRESS_TLS_SECRET_NAME false
-          resolve_pref_var_then_secret WILDCARD_CRT true
-          resolve_pref_var_then_secret WILDCARD_KEY true
-
-          # Required: Dependency-Track app config
-          resolve_pref_var_then_secret DTRACK_DB_URL true
-          # Optional: Override image tag (blank => chart AppVersion)
-          resolve_pref_var_then_secret DTRACK_IMAGE_TAG false ""
-
-          # Validate required values are present
-          require_non_empty DEPLOY_CLIENT_ID
-          require_non_empty DEPLOY_TENANT_ID
-          require_non_empty DEPLOY_SUBSCRIPTION_ID
-          require_non_empty DEPLOY_SECRET
-          require_non_empty AKS_RESOURCE_GROUP
-          require_non_empty AKS_CLUSTER_NAME
-
-          require_non_empty NEXUS_DOCKER_REGISTRY
-          require_non_empty NEXUS_DOCKER_USERNAME
-          require_non_empty NEXUS_DOCKER_PASSWORD
-          require_non_empty IMAGE_PULL_SECRET_NAME
-
-          require_non_empty INGRESS_TLS_SECRET_NAME
-          require_non_empty WILDCARD_CRT
-          require_non_empty WILDCARD_KEY
-
-          require_non_empty DTRACK_DB_URL
-
-      # -------------------------------------------------------------------
-      # Azure auth and kubectl/helm setup
-      # -------------------------------------------------------------------
-      - name: Azure login (Service Principal)
-        uses: azure/login@v2
-        with:
-          client-id: ${{ env.DEPLOY_CLIENT_ID }}
-          tenant-id: ${{ env.DEPLOY_TENANT_ID }}
-          subscription-id: ${{ env.DEPLOY_SUBSCRIPTION_ID }}
-          client-secret: ${{ env.DEPLOY_SECRET }}
-
-      - name: Set up kubectl
-        uses: azure/setup-kubectl@v4
-        with:
-          version: v1.29.0
-
-      - name: Set up Helm
-        uses: azure/setup-helm@v4
-        with:
-          version: v3.14.4
-
-      - name: Get AKS credentials
+      - name: Validate required variables and normalise Helm timeout
         shell: bash
         run: |
           set -euo pipefail
+
+          : "${AKS_RESOURCE_GROUP:?AKS_RESOURCE_GROUP empty}"
+          : "${AKS_CLUSTER_NAME:?AKS_CLUSTER_NAME empty}"
+          : "${DEPLOY_CLIENT_ID:?DEPLOY_CLIENT_ID empty}"
+          : "${DEPLOY_SECRET:?DEPLOY_SECRET empty}"
+          : "${AZURE_TENANT_ID:?AZURE_TENANT_ID empty}"
+          : "${AZURE_SUBSCRIPTION_ID:?AZURE_SUBSCRIPTION_ID empty}"
+
+          : "${NEXUS_DOCKER_SERVER:?NEXUS_DOCKER_SERVER empty}"
+          : "${NEXUS_DOCKER_USERNAME:?NEXUS_DOCKER_USERNAME empty}"
+          : "${NEXUS_DOCKER_PASSWORD:?NEXUS_DOCKER_PASSWORD empty}"
+          : "${IMAGE_PULL_SECRET_NAME:?IMAGE_PULL_SECRET_NAME empty}"
+
+          : "${INGRESS_TLS_SECRET_NAME:?INGRESS_TLS_SECRET_NAME empty}"
+          : "${WILDCARD_CRT:?WILDCARD_CRT empty}"
+          : "${WILDCARD_KEY:?WILDCARD_KEY empty}"
+
+          : "${DTRACK_CHART_VERSION:?DTRACK_CHART_VERSION empty}"
+          : "${HELM_TIMEOUT:?HELM_TIMEOUT empty}"
+
+          # Default DTRACK_IMAGE_REGISTRY to the Nexus server if empty.
+          if [[ -z "${DTRACK_IMAGE_REGISTRY:-}" ]]; then
+            echo "DTRACK_IMAGE_REGISTRY=${NEXUS_DOCKER_SERVER}" >> "${GITHUB_ENV}"
+          fi
+
+          # Normalise Helm timeout:
+          # - If purely numeric (e.g. "10"), treat as minutes ("10m")
+          # - If unit suffix (s/m/h) exists, keep as-is
+          if [[ "${HELM_TIMEOUT}" =~ ^[0-9]+$ ]]; then
+            HELM_TIMEOUT="${HELM_TIMEOUT}m"
+          fi
+          if [[ ! "${HELM_TIMEOUT}" =~ ^[0-9]+[smh]$ ]]; then
+            echo "ERROR: HELM_TIMEOUT must be like '10m', '600s', '5h' (or a number of minutes like '10'). Got: '${HELM_TIMEOUT}'" >&2
+            exit 1
+          fi
+          echo "HELM_TIMEOUT=${HELM_TIMEOUT}" >> "${GITHUB_ENV}"
+
+          # Validate ingress annotations JSON if set.
+          python3 - <<'PY'
+          import json, os
+          raw = os.environ.get('DTRACK_INGRESS_ANNOTATIONS_JSON','{}') or '{}'
+          try:
+            j = json.loads(raw)
+            if not isinstance(j, dict):
+              raise ValueError('must be a JSON object')
+          except Exception as e:
+            raise SystemExit(f"DTRACK_INGRESS_ANNOTATIONS_JSON invalid: {e}")
+          PY
+
+      - name: Azure login (Service Principal + secret)
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${DEPLOY_CLIENT_ID:?DEPLOY_CLIENT_ID empty}"
+          : "${DEPLOY_SECRET:?DEPLOY_SECRET empty}"
+          : "${AZURE_TENANT_ID:?AZURE_TENANT_ID empty}"
+          : "${AZURE_SUBSCRIPTION_ID:?AZURE_SUBSCRIPTION_ID empty}"
+
+          # Force non-interactive Azure CLI behaviour by isolating config and clearing any stale context.
+          rm -rf "${AZURE_CONFIG_DIR}" 2>/dev/null || true
+          mkdir -p "${AZURE_CONFIG_DIR}"
+          az logout --output=none 2>/dev/null || true
+          az account clear --output=none 2>/dev/null || true
+
+          az login \
+            --service-principal \
+            --username="${DEPLOY_CLIENT_ID}" \
+            --password="${DEPLOY_SECRET}" \
+            --tenant="${AZURE_TENANT_ID}" \
+            --output=none
+
+          az account set --subscription="${AZURE_SUBSCRIPTION_ID}"
+
+      - name: Get AKS credentials (Entra) + kubelogin convert
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+
+          ADMIN_FLAG=""
+          if [[ "${{ inputs.use_admin_credentials }}" == "true" ]]; then
+            ADMIN_FLAG="--admin"
+          fi
+
           az aks get-credentials \
-            --resource-group "${AKS_RESOURCE_GROUP}" \
-            --name "${AKS_CLUSTER_NAME}" \
+            --resource-group="${AKS_RESOURCE_GROUP}" \
+            --name="${AKS_CLUSTER_NAME}" \
+            ${ADMIN_FLAG} \
+            --file="${KUBECONFIG}" \
             --overwrite-existing
 
-      # -------------------------------------------------------------------
-      # Namespace + Secrets
-      # -------------------------------------------------------------------
-      - name: Ensure namespace exists
-        shell: bash
-        run: |
-          set -euo pipefail
-          kubectl create namespace dependency-track --dry-run=client -o yaml | kubectl apply -f -
+          if [[ "${{ inputs.use_admin_credentials }}" == "true" ]]; then
+            echo "Using admin kubeconfig; skipping kubelogin convert."
+            exit 0
+          fi
 
-      - name: Create/update IMAGE_PULL_SECRET_NAME (dockerconfigjson)
+          kubelogin convert-kubeconfig \
+            --login="spn" \
+            --client-id="${DEPLOY_CLIENT_ID}" \
+            --client-secret="${DEPLOY_SECRET}" \
+            --tenant-id="${AZURE_TENANT_ID}" \
+            --kubeconfig="${KUBECONFIG}"
+
+          if grep --quiet "command: azurecli" "${KUBECONFIG}"; then
+            echo "ERROR: kubeconfig still references azurecli exec (interactive). kubelogin convert failed." >&2
+            exit 1
+          fi
+
+      # ----------------------------------------------------------------------
+      # Dependency-Track deployment
+      # ----------------------------------------------------------------------
+
+      - name: Ensure namespace
         shell: bash
         run: |
           set -euo pipefail
-          kubectl -n dependency-track create secret docker-registry "${IMAGE_PULL_SECRET_NAME}" \
-            --docker-server="${NEXUS_DOCKER_REGISTRY}" \
+          kubectl get namespace "${DTRACK_NAMESPACE}" >/dev/null 2>&1 || kubectl create namespace "${DTRACK_NAMESPACE}"
+
+      - name: Create/update imagePullSecret (Nexus) in dependency-track namespace
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+
+          kubectl --namespace="${DTRACK_NAMESPACE}" create secret docker-registry "${IMAGE_PULL_SECRET_NAME}" \
+            --docker-server="${NEXUS_DOCKER_SERVER}" \
             --docker-username="${NEXUS_DOCKER_USERNAME}" \
             --docker-password="${NEXUS_DOCKER_PASSWORD}" \
-            --dry-run=client -o yaml | kubectl apply -f -
+            --dry-run=client --output=yaml \
+            | kubectl apply --filename=-
 
-      - name: Create/update INGRESS_TLS_SECRET_NAME (TLS)
+      - name: Create/update TLS secret (wildcard) in dependency-track namespace
         shell: bash
         run: |
           set -euo pipefail
           umask 077
-          tmp_dir="$(mktemp -d)"
-          trap 'rm -rf "${tmp_dir}"' EXIT
 
-          crt_file="${tmp_dir}/wildcard.crt"
-          key_file="${tmp_dir}/wildcard.key"
+          CERT_FILE="/tmp/wildcard.crt"
+          KEY_FILE="/tmp/wildcard.key"
 
-          # Write secret material to temp files only
-          printf '%s' "${WILDCARD_CRT}" > "${crt_file}"
-          printf '%s' "${WILDCARD_KEY}" > "${key_file}"
+          python3 - <<'PY'
+          import os
+          open('/tmp/wildcard.crt','w',encoding='utf-8').write(os.environ.get('WILDCARD_CRT',''))
+          open('/tmp/wildcard.key','w',encoding='utf-8').write(os.environ.get('WILDCARD_KEY',''))
+          PY
 
-          kubectl -n dependency-track create secret tls "${INGRESS_TLS_SECRET_NAME}" \
-            --cert="${crt_file}" \
-            --key="${key_file}" \
-            --dry-run=client -o yaml | kubectl apply -f -
+          chmod 600 "${CERT_FILE}" "${KEY_FILE}"
 
-      - name: Create/update dependency-track-app-config (sensitive app config)
+          if ! grep -q "^-----BEGIN CERTIFICATE-----" "${CERT_FILE}"; then
+            echo "ERROR: WILDCARD_CRT does not look like PEM. Expected '-----BEGIN CERTIFICATE-----'." >&2
+            exit 1
+          fi
+          if ! grep -q "^-----BEGIN" "${KEY_FILE}"; then
+            echo "ERROR: WILDCARD_KEY does not look like PEM." >&2
+            exit 1
+          fi
+
+          kubectl --namespace="${DTRACK_NAMESPACE}" create secret tls "${INGRESS_TLS_SECRET_NAME}" \
+            --cert="${CERT_FILE}" \
+            --key="${KEY_FILE}" \
+            --dry-run=client --output=yaml \
+            | kubectl apply --filename=-
+
+      - name: Create/update app config secret (dependency-track)
         shell: bash
         run: |
           set -euo pipefail
           umask 077
-          tmp_dir="$(mktemp -d)"
-          trap 'rm -rf "${tmp_dir}"' EXIT
 
-          cat > "${tmp_dir}/app-config.yaml" <<EOFYAML
-apiVersion: v1
-kind: Secret
-metadata:
-  name: dependency-track-app-config
-  namespace: dependency-track
-type: Opaque
-stringData:
-  # External DB (required for production)
-  ALPINE_DATABASE_MODE: "external"
-  ALPINE_DATABASE_URL: "${DTRACK_DB_URL}"
-EOFYAML
+          # Build an env file without echoing values to logs.
+          ENV_FILE="${RUNNER_TEMP}/dtrack.env"
+          rm -f "${ENV_FILE}" || true
+          : > "${ENV_FILE}"
+          chmod 600 "${ENV_FILE}"
 
-          kubectl apply -f "${tmp_dir}/app-config.yaml"
+          # Only write keys that are set.
+          [[ -n "${ALPINE_DATABASE_MODE:-}" ]] && printf 'ALPINE_DATABASE_MODE=%s\n' "${ALPINE_DATABASE_MODE}" >> "${ENV_FILE}"
+          [[ -n "${ALPINE_DATABASE_URL:-}" ]] && printf 'ALPINE_DATABASE_URL=%s\n' "${ALPINE_DATABASE_URL}" >> "${ENV_FILE}"
+          [[ -n "${ALPINE_DATABASE_USERNAME:-}" ]] && printf 'ALPINE_DATABASE_USERNAME=%s\n' "${ALPINE_DATABASE_USERNAME}" >> "${ENV_FILE}"
+          [[ -n "${ALPINE_DATABASE_PASSWORD:-}" ]] && printf 'ALPINE_DATABASE_PASSWORD=%s\n' "${ALPINE_DATABASE_PASSWORD}" >> "${ENV_FILE}"
 
-      # -------------------------------------------------------------------
-      # Helm values + install/upgrade
-      # -------------------------------------------------------------------
-      - name: Render values.generated.yaml (no secret values)
+          kubectl --namespace="${DTRACK_NAMESPACE}" create secret generic "${DTRACK_APP_CONFIG_SECRET_NAME}" \
+            --from-env-file="${ENV_FILE}" \
+            --dry-run=client --output=yaml \
+            | kubectl apply --filename=-
+
+      - name: Render values.generated.yaml (no secret logging)
         shell: bash
         run: |
           set -euo pipefail
           umask 077
-          tmp_dir="$(mktemp -d)"
-          trap 'rm -rf "${tmp_dir}"' EXIT
 
-          values_file="${tmp_dir}/values.generated.yaml"
+          TEMPLATE_PATH="helm/dependency-track/values.template.yaml"
+          OUT_PATH="${RUNNER_TEMP}/values.generated.yaml"
+          chmod 600 "${TEMPLATE_PATH}" || true
 
-          cat > "${values_file}" <<EOFYAML
-common:
-  image:
-    registry: "${NEXUS_DOCKER_REGISTRY}"
-    pullSecrets:
-      - name: "${IMAGE_PULL_SECRET_NAME}"
+          python3 - <<'PY'
+          import os, json
+          from pathlib import Path
 
-apiServer:
-  image:
-    repository: "dependencytrack/apiserver"
-    tag: "${DTRACK_IMAGE_TAG}"
-  extraEnvFrom:
-    - secretRef:
-        name: "dependency-track-app-config"
+          repl = {
+            '<DTRACK_IMAGE_REGISTRY>': os.environ.get('DTRACK_IMAGE_REGISTRY',''),
+            '<IMAGE_PULL_SECRET_NAME>': os.environ.get('IMAGE_PULL_SECRET_NAME',''),
 
-frontend:
-  image:
-    repository: "dependencytrack/frontend"
-    tag: "${DTRACK_IMAGE_TAG}"
+            '<DTRACK_SECRET_KEY_CREATE>': (os.environ.get('DTRACK_SECRET_KEY_CREATE','true') or 'true').lower(),
+            '<DTRACK_SECRET_KEY_EXISTING_SECRET_NAME>': os.environ.get('DTRACK_SECRET_KEY_EXISTING_SECRET_NAME',''),
 
-ingress:
-  enabled: true
-  hostname: "${DTRACK_INGRESS_HOST}"
-  ingressClassName: "traefik"
-  tls:
-    - secretName: "${INGRESS_TLS_SECRET_NAME}"
-      hosts:
-        - "${DTRACK_INGRESS_HOST}"
-EOFYAML
+            '<DTRACK_APISERVER_IMAGE_REGISTRY>': os.environ.get('DTRACK_APISERVER_IMAGE_REGISTRY',''),
+            '<DTRACK_APISERVER_IMAGE_REPOSITORY>': os.environ.get('DTRACK_APISERVER_IMAGE_REPOSITORY','dependencytrack/apiserver'),
+            '<DTRACK_APISERVER_IMAGE_TAG>': os.environ.get('DTRACK_APISERVER_IMAGE_TAG',''),
 
-          chmod 600 "${values_file}"
-          echo "VALUES_FILE=${values_file}" >> "${GITHUB_ENV}"
+            '<DTRACK_FRONTEND_IMAGE_REGISTRY>': os.environ.get('DTRACK_FRONTEND_IMAGE_REGISTRY',''),
+            '<DTRACK_FRONTEND_IMAGE_REPOSITORY>': os.environ.get('DTRACK_FRONTEND_IMAGE_REPOSITORY','dependencytrack/frontend'),
+            '<DTRACK_FRONTEND_IMAGE_TAG>': os.environ.get('DTRACK_FRONTEND_IMAGE_TAG',''),
 
-      - name: Helm upgrade/install (pinned, atomic)
+            '<DTRACK_FRONTEND_API_BASE_URL>': os.environ.get('DTRACK_FRONTEND_API_BASE_URL',''),
+
+            '<DTRACK_INGRESS_HOST>': os.environ.get('DTRACK_INGRESS_HOST','example.com'),
+            '<DTRACK_INGRESS_CLASS_NAME>': os.environ.get('DTRACK_INGRESS_CLASS_NAME',''),
+            '<INGRESS_TLS_SECRET_NAME>': os.environ.get('INGRESS_TLS_SECRET_NAME',''),
+
+            '<DTRACK_APP_CONFIG_SECRET_NAME>': os.environ.get('DTRACK_APP_CONFIG_SECRET_NAME','dependency-track-app-config'),
+          }
+
+          # PV placeholders (explicit defaults)
+          repl['<DTRACK_APISERVER_PV_ENABLED>'] = (os.environ.get('DTRACK_APISERVER_PV_ENABLED','false') or 'false').lower()
+          repl['<DTRACK_APISERVER_PV_CLASSNAME>'] = os.environ.get('DTRACK_APISERVER_PV_CLASSNAME','')
+          repl['<DTRACK_APISERVER_PV_SIZE>'] = os.environ.get('DTRACK_APISERVER_PV_SIZE','5Gi')
+
+          # Ingress annotations JSON (render as YAML object)
+          ann_raw = os.environ.get('DTRACK_INGRESS_ANNOTATIONS_JSON','{}') or '{}'
+          try:
+            ann = json.loads(ann_raw)
+          except Exception:
+            ann = {}
+
+          text = Path('helm/dependency-track/values.template.yaml').read_text(encoding='utf-8')
+          for k,v in repl.items():
+            text = text.replace(k, str(v))
+
+          # Replace JSON placeholder with compact JSON (YAML parser handles mapping)
+          text = text.replace('<DTRACK_INGRESS_ANNOTATIONS_JSON>', json.dumps(ann, separators=(',',':')))
+
+          out = Path(os.environ['RUNNER_TEMP']) / 'values.generated.yaml'
+          out.write_text(text, encoding='utf-8')
+          out.chmod(0o600)
+          PY
+
+          # Prevent accidental echo of values file.
+          test -s "${OUT_PATH}"
+
+      - name: Install/upgrade Dependency-Track (official chart; images pulled from Nexus)
         shell: bash
         run: |
           set -euo pipefail
 
-          helm repo add dependency-track "${DTRACK_HELM_REPO_URL}" --force-update
+          helm repo add dependency-track "${DTRACK_HELM_REPO_URL}"
           helm repo update
 
-          helm upgrade --install dependency-track dependency-track/dependency-track \
-            --namespace dependency-track \
-            --create-namespace \
-            --version "${DTRACK_CHART_VERSION}" \
-            --values "${VALUES_FILE}" \
-            --wait \
-            --atomic \
-            --timeout "${HELM_TIMEOUT}"
+          helm upgrade --install "${DTRACK_RELEASE_NAME}" dependency-track/dependency-track \
+            --namespace="${DTRACK_NAMESPACE}" \
+            --version="${DTRACK_CHART_VERSION}" \
+            --values="${RUNNER_TEMP}/values.generated.yaml" \
+            --wait --atomic --timeout="${HELM_TIMEOUT}"
 
-      - name: Post-deploy checks
+          kubectl --namespace="${DTRACK_NAMESPACE}" get pods --output=wide
+          kubectl --namespace="${DTRACK_NAMESPACE}" get svc --output=wide
+
+      - name: Post-deploy checks (ingress + health)
         shell: bash
         run: |
           set -euo pipefail
-          kubectl -n dependency-track get all
-          kubectl -n dependency-track get ingress
-          kubectl -n dependency-track get pods -l app.kubernetes.io/instance=dependency-track
+
+          echo "Ingress resources:"
+          kubectl --namespace="${DTRACK_NAMESPACE}" get ingress -o wide || true
+
+          echo "Services:"
+          kubectl --namespace="${DTRACK_NAMESPACE}" get svc -o wide
+
+          echo "Wait for API server readiness via Kubernetes probes:"
+          kubectl --namespace="${DTRACK_NAMESPACE}" wait --for=condition=Ready pod \
+            -l app.kubernetes.io/name=dependency-track-apiserver \
+            --timeout=5m || true
+
+          echo "Done."

@@ -1,13 +1,9 @@
 # Changelog
 
-## v0.1.0
+## v0.1.1
+- Reused the tested **Azure login / AKS credentials / Helm install** step patterns from `deploy-traefik.yaml` (az cli login + kubelogin spn conversion).
+- Added pre-run resolver (`vars` preferred over `secrets`) and logs source selection without leaking secret values.
+- Helm timeout parsing aligned with Traefik workflow (`10` -> `10m`).
 
-- Initial companion repository for deploying Dependency-Track to AKS.
-- GHES GitHub Actions workflow using Azure Service Principal + client secret (no OIDC).
-- Idempotent creation of:
-  - namespace `dependency-track`
-  - image pull secret `IMAGE_PULL_SECRET_NAME`
-  - TLS secret `INGRESS_TLS_SECRET_NAME`
-  - app config secret `dependency-track-app-config`
-- Chart deployment using pinned `dependency-track/dependency-track` version, `--wait --atomic --timeout`.
-- Pre-run input resolver that prefers Environment vars over secrets and logs selection (secrets redacted).
+## v0.1.0
+- Initial repository skeleton for deploying Dependency-Track behind an existing Traefik ingress.

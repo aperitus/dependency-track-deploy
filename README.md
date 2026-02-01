@@ -1,87 +1,94 @@
-# dependency-track-deploy
+# dependency-track-deploy (AKS via GHES)
 
-Deploy **OWASP Dependency-Track** to AKS using **GitHub Actions** on **GitHub Enterprise Server (GHES)**.
+Deploys **Dependency-Track** to an existing AKS cluster, using an existing **Traefik** ingress controller (managed in a separate repository).
 
-This repository **does not** deploy Traefik. It assumes the **Traefik baseline ingress repo** (your `traefik-aks-ingress` repo) is already installed and operating in `routing_mode=ingress` or `both`.
+## What this repo does
 
-## Target
+- Logs into Azure using **Service Principal + client secret** (no OIDC).
+- Fetches AKS credentials and converts kubeconfig via **kubelogin**.
+- Creates/updates:
+  - Namespace: `dependency-track`
+  - Image pull secret in `dependency-track`
+  - TLS secret in `dependency-track` from wildcard cert/key
+  - (Optional) application config secret for API server env vars (e.g., external DB)
+- Renders a `values.generated.yaml` from a template **without printing secrets**.
+- Installs/updates the official `dependencytrack/dependency-track` Helm chart with `--wait --atomic`.
 
-- Namespace: `dependency-track`
-- Release name: `dependency-track`
-- Ingress host: `dtrack.logiki.co.uk`
-- Ingress class: `traefik` (Kubernetes Ingress compatibility mode)
+## Environments
 
-## Key behaviours
+This repository expects GitHub **Environments** (e.g. `dev`, `prod`) with variables and secrets populated (typically by your Key Vault → GHES secret sync tool).
 
-- Idempotent: safe to re-run.
-- Auth to Azure using **Service Principal + client secret** (no OIDC federation).
-- Images pulled from **Nexus** (registry override via chart values) and a namespace imagePullSecret.
-- TLS secret created/updated in the **app namespace**.
-- Sensitive app config is stored in a Kubernetes Secret (`dependency-track-app-config`) and referenced via `apiServer.extraEnvFrom`.
-- Helm uses pinned chart version and `--wait --atomic --timeout`.
+## Required variables and secrets
+
+### Azure / AKS access
+
+**Secrets** (preferred, but variables are supported via the resolver step):
+- `DEPLOY_CLIENT_ID` – SP appId
+- `DEPLOY_SECRET` – SP client secret
+- `AZURE_TENANT_ID`
+- `AZURE_SUBSCRIPTION_ID`
+
+**Vars** (or secrets):
+- `AKS_RESOURCE_GROUP`
+- `AKS_CLUSTER_NAME`
+
+### Nexus registry pull secret (for *all* images)
+
+**Vars** (or secrets):
+- `IMAGE_PULL_SECRET_NAME` (default: `nexus-pull`)
+- `NEXUS_DOCKER_SERVER` (e.g. `docker-hosted-nexus.logiki.co.uk`)
+- `NEXUS_DOCKER_USERNAME`
+
+**Secrets**:
+- `NEXUS_DOCKER_PASSWORD`
+
+### Ingress TLS
+
+**Vars** (or secrets):
+- `INGRESS_TLS_SECRET_NAME` (default: `dtrack-wildcard-tls`)
+
+**Secrets**:
+- `WILDCARD_CRT` – PEM certificate (must include `-----BEGIN CERTIFICATE-----`)
+- `WILDCARD_KEY` – PEM private key
+
+### Dependency-Track chart and ingress settings
+
+**Vars** (or secrets):
+- `DTRACK_HELM_REPO_URL` (default: `https://dependencytrack.github.io/helm-charts`)
+- `DTRACK_CHART_VERSION` (default: `0.41.0`)
+- `DTRACK_RELEASE_NAME` (default: `dependency-track`)
+- `DTRACK_NAMESPACE` (default: `dependency-track`)
+
+**Vars**:
+- `DTRACK_INGRESS_HOST` (default: `dtrack.logiki.co.uk`)
+- `DTRACK_INGRESS_CLASS_NAME` (default: `traefik`)
+
+### Image overrides (Nexus-only)
+
+**Vars**:
+- `DTRACK_IMAGE_REGISTRY` (default: value of `NEXUS_DOCKER_SERVER`)
+- `DTRACK_APISERVER_IMAGE_REPOSITORY` (default: `dependencytrack/apiserver`)
+- `DTRACK_FRONTEND_IMAGE_REPOSITORY` (default: `dependencytrack/frontend`)
+- `DTRACK_APISERVER_IMAGE_TAG` (optional; default = chart appVersion)
+- `DTRACK_FRONTEND_IMAGE_TAG` (optional; default = chart appVersion)
+
+### Optional: API server extra env from secret
+
+If you want the API server to use an external database, OIDC, etc., create a Kubernetes secret containing the required env vars.
+
+**Vars**:
+- `DTRACK_APP_CONFIG_SECRET_NAME` (default: `dependency-track-app-config`)
+
+**Secrets/Vars** (examples; these are applied into the K8s secret if provided):
+- `ALPINE_DATABASE_MODE` (set to `external`)
+- `ALPINE_DATABASE_URL`
+- `ALPINE_DATABASE_USERNAME`
+- `ALPINE_DATABASE_PASSWORD`
+
+> The workflow will only add keys that are set (var or secret). It will not echo values.
 
 ## Workflow
 
-The main workflow is:
-
 - `.github/workflows/deploy-dependency-track.yaml`
 
-It performs:
-
-1. Resolve inputs (prefer **Environment variables** `vars.<NAME>` then **Environment secrets** `secrets.<NAME>`).
-2. Azure login + AKS kubeconfig.
-3. Ensure namespace exists.
-4. Create/update:
-   - `IMAGE_PULL_SECRET_NAME` (dockerconfigjson) in `dependency-track`
-   - `INGRESS_TLS_SECRET_NAME` (TLS) in `dependency-track`
-   - `dependency-track-app-config` (generic secret) in `dependency-track`
-5. Render a minimal `values.generated.yaml` (no secret values).
-6. `helm upgrade --install` the official chart.
-7. Basic post-deploy checks.
-
-## Required GitHub Environment configuration
-
-Create a GitHub **Environment** (e.g. `prod`) and populate the following. You may place non-sensitive items as **vars** and sensitive items as **secrets**.
-
-> Input resolution order: `vars.<NAME>` then `secrets.<NAME>`.
-
-### Azure / AKS
-
-- `DEPLOY_CLIENT_ID` (App registration / SP client ID) (var recommended)
-- `DEPLOY_TENANT_ID` (var recommended)
-- `DEPLOY_SUBSCRIPTION_ID` (var recommended)
-- `DEPLOY_SECRET` (secret)
-- `AKS_RESOURCE_GROUP` (var recommended)
-- `AKS_CLUSTER_NAME` (var recommended)
-
-### Nexus registry
-
-- `NEXUS_DOCKER_REGISTRY` (e.g. `docker-hosted-nexus.logiki.co.uk`) (var recommended)
-- `NEXUS_DOCKER_USERNAME` (secret)
-- `NEXUS_DOCKER_PASSWORD` (secret)
-- `IMAGE_PULL_SECRET_NAME` (e.g. `nexus-docker-creds`) (var recommended)
-
-### TLS for Ingress
-
-- `INGRESS_TLS_SECRET_NAME` (e.g. `wildcard-tls`) (var recommended)
-- `WILDCARD_CRT` (secret) — PEM certificate (`-----BEGIN CERTIFICATE-----`)
-- `WILDCARD_KEY` (secret) — PEM private key (`-----BEGIN PRIVATE KEY-----`)
-
-### Dependency-Track application
-
-- `DTRACK_DB_URL` (secret) — JDBC URL for external DB.
-  - Example: `jdbc:postgresql://postgres.example.internal:5432/dtrack?user=dtrack&password=...`
-- Optional: `DTRACK_EXTRA_ENV_YAML` (secret) — additional env entries as YAML list items (advanced; see workflow comments).
-
-### Helm / chart
-
-- `DTRACK_HELM_REPO_URL` (var) — default: `https://dependencytrack.github.io/helm-charts`
-- `DTRACK_CHART_VERSION` (var) — default: `0.41.0`
-- `DTRACK_INGRESS_HOST` (var) — default: `dtrack.logiki.co.uk`
-- `HELM_TIMEOUT` (var) — default: `15m`
-
-## Notes
-
-- The Dependency-Track chart values schema used here comes from the official chart (`dependency-track/dependency-track`).
-- Traefik’s ingress onboarding guidance expects `spec.ingressClassName: traefik` and a TLS secret in the same namespace as the Ingress.
-
+Run manually via **Actions → Deploy Dependency-Track**, selecting the environment.
