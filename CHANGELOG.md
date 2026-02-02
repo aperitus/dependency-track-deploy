@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.1.6
+- Fixed workflow failure: export ENV_FILE before Python reads it in the app-config secret step.
+- Added a normalisation step to set AZURE_CONFIG_DIR and KUBECONFIG to resolved ${RUNNER_TEMP} paths (job-level values use literal $RUNNER_TEMP).
+
 ## v0.1.4
 - Added a configuration reference table in README with descriptions and examples for all workflow inputs and environment keys.
 

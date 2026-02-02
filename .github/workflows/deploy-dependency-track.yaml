@@ -39,8 +39,8 @@ jobs:
 
     env:
       # Keep Azure CLI state isolated and avoid cross-job contamination.
-      AZURE_CONFIG_DIR: ${{ runner.temp }}/.azure
-      KUBECONFIG: ${{ runner.temp }}/kubeconfig
+      AZURE_CONFIG_DIR: $RUNNER_TEMP/.azure
+      KUBECONFIG: $RUNNER_TEMP/kubeconfig
 
       # Helm timeout (validated/normalised in a step below)
       HELM_TIMEOUT: ${{ inputs.helm_timeout }}
@@ -115,6 +115,15 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Normalise runner temp paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Job-level env uses literal $RUNNER_TEMP; normalise to resolved paths for tooling.
+          echo "AZURE_CONFIG_DIR=${RUNNER_TEMP}/.azure" >> "${GITHUB_ENV}"
+          echo "KUBECONFIG=${RUNNER_TEMP}/kubeconfig" >> "${GITHUB_ENV}"
+
 
       # ----------------------------------------------------------------------
       # Reused patterns from deploy-traefik.yaml (tested on your runner)
@@ -349,6 +358,7 @@ jobs:
           umask 077
 
           ENV_FILE="${RUNNER_TEMP}/dtrack.env"
+          export ENV_FILE
           rm -f "${ENV_FILE}" || true
           : > "${ENV_FILE}"
           chmod 600 "${ENV_FILE}"
