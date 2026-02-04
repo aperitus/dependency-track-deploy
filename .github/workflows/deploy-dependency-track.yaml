@@ -57,18 +57,23 @@ jobs:
       AKS_RESOURCE_GROUP: ${{ vars.AKS_RESOURCE_GROUP != '' && vars.AKS_RESOURCE_GROUP || secrets.AKS_RESOURCE_GROUP }}
       AKS_CLUSTER_NAME: ${{ vars.AKS_CLUSTER_NAME != '' && vars.AKS_CLUSTER_NAME || secrets.AKS_CLUSTER_NAME }}
 
-      # Nexus registry creds
-      NEXUS_DOCKER_SERVER: ${{ vars.NEXUS_DOCKER_SERVER != '' && vars.NEXUS_DOCKER_SERVER || secrets.NEXUS_DOCKER_SERVER }}
-      NEXUS_DOCKER_USERNAME: ${{ vars.NEXUS_DOCKER_USERNAME != '' && vars.NEXUS_DOCKER_USERNAME || secrets.NEXUS_DOCKER_USERNAME }}
-      NEXUS_DOCKER_PASSWORD: ${{ vars.NEXUS_DOCKER_PASSWORD != '' && vars.NEXUS_DOCKER_PASSWORD || secrets.NEXUS_DOCKER_PASSWORD }}
+      # Container registry creds (Nexus)
+      REGISTRY_SERVER: ${{ vars.REGISTRY_SERVER != '' && vars.REGISTRY_SERVER || secrets.REGISTRY_SERVER }}
+      REGISTRY_USERNAME: ${{ vars.REGISTRY_USERNAME != '' && vars.REGISTRY_USERNAME || secrets.REGISTRY_USERNAME }}
+      REGISTRY_PASSWORD: ${{ vars.REGISTRY_PASSWORD != '' && vars.REGISTRY_PASSWORD || secrets.REGISTRY_PASSWORD }}
 
       # Wildcard TLS material
       WILDCARD_CRT: ${{ vars.WILDCARD_CRT != '' && vars.WILDCARD_CRT || secrets.WILDCARD_CRT }}
       WILDCARD_KEY: ${{ vars.WILDCARD_KEY != '' && vars.WILDCARD_KEY || secrets.WILDCARD_KEY }}
 
-      # Postgres JDBC URL for Dependency-Track (required)
-      # Expected format: jdbc:postgresql://host:5432/dbname
+      # Database (external Postgres)
+      # Preferred: set ALPINE_DATABASE_URL/USERNAME/PASSWORD directly.
+      # Legacy fallback: DTRACK_DB_URL (used only if ALPINE_DATABASE_URL is empty).
       DTRACK_DB_URL: ${{ vars.DTRACK_DB_URL != '' && vars.DTRACK_DB_URL || secrets.DTRACK_DB_URL }}
+      ALPINE_DATABASE_MODE: ${{ (vars.ALPINE_DATABASE_MODE != '' && vars.ALPINE_DATABASE_MODE) || (secrets.ALPINE_DATABASE_MODE != '' && secrets.ALPINE_DATABASE_MODE) || '' }}
+      ALPINE_DATABASE_URL: ${{ (vars.ALPINE_DATABASE_URL != '' && vars.ALPINE_DATABASE_URL) || (secrets.ALPINE_DATABASE_URL != '' && secrets.ALPINE_DATABASE_URL) || '' }}
+      ALPINE_DATABASE_USERNAME: ${{ (vars.ALPINE_DATABASE_USERNAME != '' && vars.ALPINE_DATABASE_USERNAME) || (secrets.ALPINE_DATABASE_USERNAME != '' && secrets.ALPINE_DATABASE_USERNAME) || '' }}
+      ALPINE_DATABASE_PASSWORD: ${{ (vars.ALPINE_DATABASE_PASSWORD != '' && vars.ALPINE_DATABASE_PASSWORD) || (secrets.ALPINE_DATABASE_PASSWORD != '' && secrets.ALPINE_DATABASE_PASSWORD) || '' }}
 
       # Defaults (can be overridden via vars/secrets)
       DTRACK_NAMESPACE: ${{ (vars.DTRACK_NAMESPACE != '' && vars.DTRACK_NAMESPACE) || (secrets.DTRACK_NAMESPACE != '' && secrets.DTRACK_NAMESPACE) || 'dependency-track' }}
@@ -85,13 +90,9 @@ jobs:
       INGRESS_TLS_SECRET_NAME: ${{ (vars.INGRESS_TLS_SECRET_NAME != '' && vars.INGRESS_TLS_SECRET_NAME) || (secrets.INGRESS_TLS_SECRET_NAME != '' && secrets.INGRESS_TLS_SECRET_NAME) || 'dtrack-wildcard-tls' }}
       DTRACK_APP_CONFIG_SECRET_NAME: ${{ (vars.DTRACK_APP_CONFIG_SECRET_NAME != '' && vars.DTRACK_APP_CONFIG_SECRET_NAME) || (secrets.DTRACK_APP_CONFIG_SECRET_NAME != '' && secrets.DTRACK_APP_CONFIG_SECRET_NAME) || 'dependency-track-app-config' }}
 
-      # Images
-      # - DTRACK_IMAGE_REGISTRY defaults to NEXUS_DOCKER_SERVER when empty.
-      DTRACK_IMAGE_REGISTRY: ${{ (vars.DTRACK_IMAGE_REGISTRY != '' && vars.DTRACK_IMAGE_REGISTRY) || (secrets.DTRACK_IMAGE_REGISTRY != '' && secrets.DTRACK_IMAGE_REGISTRY) || '' }}
+      # Images (always pulled from REGISTRY_SERVER)
       DTRACK_APISERVER_IMAGE_REPOSITORY: ${{ (vars.DTRACK_APISERVER_IMAGE_REPOSITORY != '' && vars.DTRACK_APISERVER_IMAGE_REPOSITORY) || (secrets.DTRACK_APISERVER_IMAGE_REPOSITORY != '' && secrets.DTRACK_APISERVER_IMAGE_REPOSITORY) || 'dependencytrack/apiserver' }}
       DTRACK_FRONTEND_IMAGE_REPOSITORY: ${{ (vars.DTRACK_FRONTEND_IMAGE_REPOSITORY != '' && vars.DTRACK_FRONTEND_IMAGE_REPOSITORY) || (secrets.DTRACK_FRONTEND_IMAGE_REPOSITORY != '' && secrets.DTRACK_FRONTEND_IMAGE_REPOSITORY) || 'dependencytrack/frontend' }}
-      DTRACK_APISERVER_IMAGE_REGISTRY: ${{ (vars.DTRACK_APISERVER_IMAGE_REGISTRY != '' && vars.DTRACK_APISERVER_IMAGE_REGISTRY) || (secrets.DTRACK_APISERVER_IMAGE_REGISTRY != '' && secrets.DTRACK_APISERVER_IMAGE_REGISTRY) || '' }}
-      DTRACK_FRONTEND_IMAGE_REGISTRY: ${{ (vars.DTRACK_FRONTEND_IMAGE_REGISTRY != '' && vars.DTRACK_FRONTEND_IMAGE_REGISTRY) || (secrets.DTRACK_FRONTEND_IMAGE_REGISTRY != '' && secrets.DTRACK_FRONTEND_IMAGE_REGISTRY) || '' }}
       DTRACK_APISERVER_IMAGE_TAG: ${{ (vars.DTRACK_APISERVER_IMAGE_TAG != '' && vars.DTRACK_APISERVER_IMAGE_TAG) || (secrets.DTRACK_APISERVER_IMAGE_TAG != '' && secrets.DTRACK_APISERVER_IMAGE_TAG) || '' }}
       DTRACK_FRONTEND_IMAGE_TAG: ${{ (vars.DTRACK_FRONTEND_IMAGE_TAG != '' && vars.DTRACK_FRONTEND_IMAGE_TAG) || (secrets.DTRACK_FRONTEND_IMAGE_TAG != '' && secrets.DTRACK_FRONTEND_IMAGE_TAG) || '' }}
 
@@ -100,12 +101,6 @@ jobs:
       DTRACK_SECRET_KEY_CREATE: ${{ (vars.DTRACK_SECRET_KEY_CREATE != '' && vars.DTRACK_SECRET_KEY_CREATE) || (secrets.DTRACK_SECRET_KEY_CREATE != '' && secrets.DTRACK_SECRET_KEY_CREATE) || 'true' }}
       DTRACK_SECRET_KEY_EXISTING_SECRET_NAME: ${{ (vars.DTRACK_SECRET_KEY_EXISTING_SECRET_NAME != '' && vars.DTRACK_SECRET_KEY_EXISTING_SECRET_NAME) || (secrets.DTRACK_SECRET_KEY_EXISTING_SECRET_NAME != '' && secrets.DTRACK_SECRET_KEY_EXISTING_SECRET_NAME) || '' }}
       DTRACK_INGRESS_ANNOTATIONS_JSON: ${{ (vars.DTRACK_INGRESS_ANNOTATIONS_JSON != '' && vars.DTRACK_INGRESS_ANNOTATIONS_JSON) || (secrets.DTRACK_INGRESS_ANNOTATIONS_JSON != '' && secrets.DTRACK_INGRESS_ANNOTATIONS_JSON) || '{}' }}
-
-      # Optional (advanced) app config keys - if set, these override DTRACK_DB_URL defaults.
-      ALPINE_DATABASE_MODE: ${{ (vars.ALPINE_DATABASE_MODE != '' && vars.ALPINE_DATABASE_MODE) || (secrets.ALPINE_DATABASE_MODE != '' && secrets.ALPINE_DATABASE_MODE) || '' }}
-      ALPINE_DATABASE_URL: ${{ (vars.ALPINE_DATABASE_URL != '' && vars.ALPINE_DATABASE_URL) || (secrets.ALPINE_DATABASE_URL != '' && secrets.ALPINE_DATABASE_URL) || '' }}
-      ALPINE_DATABASE_USERNAME: ${{ (vars.ALPINE_DATABASE_USERNAME != '' && vars.ALPINE_DATABASE_USERNAME) || (secrets.ALPINE_DATABASE_USERNAME != '' && secrets.ALPINE_DATABASE_USERNAME) || '' }}
-      ALPINE_DATABASE_PASSWORD: ${{ (vars.ALPINE_DATABASE_PASSWORD != '' && vars.ALPINE_DATABASE_PASSWORD) || (secrets.ALPINE_DATABASE_PASSWORD != '' && secrets.ALPINE_DATABASE_PASSWORD) || '' }}
 
       # PV placeholders (explicit defaults)
       DTRACK_APISERVER_PV_ENABLED: ${{ (vars.DTRACK_APISERVER_PV_ENABLED != '' && vars.DTRACK_APISERVER_PV_ENABLED) || (secrets.DTRACK_APISERVER_PV_ENABLED != '' && secrets.DTRACK_APISERVER_PV_ENABLED) || 'false' }}
@@ -123,7 +118,6 @@ jobs:
           # Job-level env uses literal $RUNNER_TEMP; normalise to resolved paths for tooling.
           echo "AZURE_CONFIG_DIR=${RUNNER_TEMP}/.azure" >> "${GITHUB_ENV}"
           echo "KUBECONFIG=${RUNNER_TEMP}/kubeconfig" >> "${GITHUB_ENV}"
-
 
       # ----------------------------------------------------------------------
       # Reused patterns from deploy-traefik.yaml (tested on your runner)
@@ -153,8 +147,8 @@ jobs:
           echo "AZURE_SUBSCRIPTION_ID=${AZURE_SUBSCRIPTION_ID}"
           echo "AKS_RESOURCE_GROUP=${AKS_RESOURCE_GROUP}"
           echo "AKS_CLUSTER_NAME=${AKS_CLUSTER_NAME}"
-          echo "NEXUS_DOCKER_SERVER=${NEXUS_DOCKER_SERVER}"
-          echo "NEXUS_DOCKER_USERNAME=${NEXUS_DOCKER_USERNAME}"
+          echo "REGISTRY_SERVER=${REGISTRY_SERVER}"
+          echo "REGISTRY_USERNAME=${REGISTRY_USERNAME}"
           echo "IMAGE_PULL_SECRET_NAME=${IMAGE_PULL_SECRET_NAME}"
           echo "INGRESS_TLS_SECRET_NAME=${INGRESS_TLS_SECRET_NAME}"
           echo "DTRACK_NAMESPACE=${DTRACK_NAMESPACE}"
@@ -163,10 +157,19 @@ jobs:
           echo "DTRACK_INGRESS_CLASS_NAME=${DTRACK_INGRESS_CLASS_NAME}"
           echo "DTRACK_HELM_REPO_URL=${DTRACK_HELM_REPO_URL}"
           echo "DTRACK_CHART_VERSION=${DTRACK_CHART_VERSION}"
-          echo "DTRACK_IMAGE_REGISTRY=${DTRACK_IMAGE_REGISTRY}"
           echo "DTRACK_APISERVER_IMAGE_REPOSITORY=${DTRACK_APISERVER_IMAGE_REPOSITORY}"
           echo "DTRACK_FRONTEND_IMAGE_REPOSITORY=${DTRACK_FRONTEND_IMAGE_REPOSITORY}"
-          echo "DTRACK_DB_URL=${DTRACK_DB_URL}"
+          echo "ALPINE_DATABASE_MODE=${ALPINE_DATABASE_MODE}"
+          # Avoid leaking credentials if a non-JDBC URL is accidentally provided via vars.
+          if [[ -n "${ALPINE_DATABASE_URL:-}" && "${ALPINE_DATABASE_URL}" == jdbc:postgresql://* ]]; then
+            echo "ALPINE_DATABASE_URL=${ALPINE_DATABASE_URL}"
+          elif [[ -n "${ALPINE_DATABASE_URL:-}" ]]; then
+            echo "ALPINE_DATABASE_URL=<non-jdbc: not printed>"
+          else
+            echo "ALPINE_DATABASE_URL="
+          fi
+          echo "ALPINE_DATABASE_USERNAME=${ALPINE_DATABASE_USERNAME}"
+          echo "ALPINE_DATABASE_PASSWORD=<redacted>"
 
       - name: Azure login (Service Principal + secret)
         shell: bash
@@ -203,20 +206,26 @@ jobs:
           : "${DTRACK_CHART_VERSION:?DTRACK_CHART_VERSION empty}"
           : "${HELM_TIMEOUT:?HELM_TIMEOUT empty}"
 
-          : "${NEXUS_DOCKER_SERVER:?NEXUS_DOCKER_SERVER empty}"
-          : "${NEXUS_DOCKER_USERNAME:?NEXUS_DOCKER_USERNAME empty}"
-          : "${NEXUS_DOCKER_PASSWORD:?NEXUS_DOCKER_PASSWORD empty}"
+          : "${REGISTRY_SERVER:?REGISTRY_SERVER empty}"
+          : "${REGISTRY_USERNAME:?REGISTRY_USERNAME empty}"
+          : "${REGISTRY_PASSWORD:?REGISTRY_PASSWORD empty}"
           : "${IMAGE_PULL_SECRET_NAME:?IMAGE_PULL_SECRET_NAME empty}"
 
           : "${INGRESS_TLS_SECRET_NAME:?INGRESS_TLS_SECRET_NAME empty}"
           : "${WILDCARD_CRT:?WILDCARD_CRT empty}"
           : "${WILDCARD_KEY:?WILDCARD_KEY empty}"
 
-          : "${DTRACK_DB_URL:?DTRACK_DB_URL empty}"
+          # Database config (external Postgres)
+          # Prefer ALPINE_DATABASE_* directly. DTRACK_DB_URL is legacy fallback.
+          if [[ -z "${ALPINE_DATABASE_URL:-}" && -z "${DTRACK_DB_URL:-}" ]]; then
+            echo "ERROR: Database URL is missing. Set ALPINE_DATABASE_URL (preferred) or DTRACK_DB_URL (legacy)." >&2
+            exit 1
+          fi
+          : "${ALPINE_DATABASE_USERNAME:?ALPINE_DATABASE_USERNAME empty}"
+          : "${ALPINE_DATABASE_PASSWORD:?ALPINE_DATABASE_PASSWORD empty}"
 
-          # Default DTRACK_IMAGE_REGISTRY to the Nexus server if empty.
-          if [[ -z "${DTRACK_IMAGE_REGISTRY:-}" ]]; then
-            echo "DTRACK_IMAGE_REGISTRY=${NEXUS_DOCKER_SERVER}" >> "${GITHUB_ENV}"
+          if [[ -z "${ALPINE_DATABASE_MODE:-}" ]]; then
+            echo "ALPINE_DATABASE_MODE=external" >> "${GITHUB_ENV}"
           fi
 
           # Normalise Helm timeout:
@@ -230,18 +239,6 @@ jobs:
             exit 1
           fi
           echo "HELM_TIMEOUT=${HELM_TIMEOUT}" >> "${GITHUB_ENV}"
-
-          # Validate ingress annotations JSON if set.
-          python3 - <<'PY'
-          import json, os
-          raw = os.environ.get('DTRACK_INGRESS_ANNOTATIONS_JSON','{}') or '{}'
-          try:
-            j = json.loads(raw)
-            if not isinstance(j, dict):
-              raise ValueError('must be a JSON object')
-          except Exception as e:
-            raise SystemExit(f"DTRACK_INGRESS_ANNOTATIONS_JSON invalid: {e}")
-          PY
 
       - name: Get AKS credentials (Entra) + kubelogin convert
         shell: bash
@@ -288,16 +285,16 @@ jobs:
           set -euo pipefail
           kubectl get namespace "${DTRACK_NAMESPACE}" >/dev/null 2>&1 || kubectl create namespace "${DTRACK_NAMESPACE}"
 
-      - name: Create/update imagePullSecret (Nexus) in dependency-track namespace
+      - name: Create/update imagePullSecret (registry) in dependency-track namespace
         shell: bash
         run: |
           set -euo pipefail
           umask 077
 
           kubectl --namespace="${DTRACK_NAMESPACE}" create secret docker-registry "${IMAGE_PULL_SECRET_NAME}" \
-            --docker-server="${NEXUS_DOCKER_SERVER}" \
-            --docker-username="${NEXUS_DOCKER_USERNAME}" \
-            --docker-password="${NEXUS_DOCKER_PASSWORD}" \
+            --docker-server="${REGISTRY_SERVER}" \
+            --docker-username="${REGISTRY_USERNAME}" \
+            --docker-password="${REGISTRY_PASSWORD}" \
             --dry-run=client --output=yaml \
             | kubectl apply --filename=-
 
@@ -367,35 +364,74 @@ jobs:
           python3 - <<'PY'
           import os
           from pathlib import Path
+          from urllib.parse import urlparse, parse_qsl, urlencode
 
           env_file = Path(os.environ['ENV_FILE'])
 
-          dtrack_db_url = os.environ.get('DTRACK_DB_URL','')
-          alpine_url = os.environ.get('ALPINE_DATABASE_URL','')
-          alpine_mode = os.environ.get('ALPINE_DATABASE_MODE','')
-          alpine_user = os.environ.get('ALPINE_DATABASE_USERNAME','')
-          alpine_pass = os.environ.get('ALPINE_DATABASE_PASSWORD','')
+          dtrack_db_url = os.environ.get('DTRACK_DB_URL','').strip()
+          alpine_url = os.environ.get('ALPINE_DATABASE_URL','').strip()
+          alpine_mode = os.environ.get('ALPINE_DATABASE_MODE','').strip()
+          alpine_user = os.environ.get('ALPINE_DATABASE_USERNAME','').strip()
+          alpine_pass = os.environ.get('ALPINE_DATABASE_PASSWORD','').strip()
 
-          data = {}
+          def to_jdbc(url: str) -> tuple[str, str, str]:
+            """Return (jdbc_url, user, pass).
 
-          # Default mapping: DTRACK_DB_URL -> ALPINE_DATABASE_URL (jdbc)
-          if dtrack_db_url and not alpine_url:
-            data['ALPINE_DATABASE_URL'] = dtrack_db_url
-          if dtrack_db_url and not alpine_mode:
-            data['ALPINE_DATABASE_MODE'] = 'external'
+            Accepts:
+              - jdbc:postgresql://host:port/db?sslmode=require
+              - postgres://user:pass@host:port/db?sslmode=require
+              - postgresql://user:pass@host:port/db
+            """
+            if url.startswith('jdbc:postgresql:'):
+              return url, '', ''
 
-          # Explicit overrides (if provided)
-          if alpine_mode:
-            data['ALPINE_DATABASE_MODE'] = alpine_mode
-          if alpine_url:
-            data['ALPINE_DATABASE_URL'] = alpine_url
-          if alpine_user:
-            data['ALPINE_DATABASE_USERNAME'] = alpine_user
-          if alpine_pass:
-            data['ALPINE_DATABASE_PASSWORD'] = alpine_pass
+            if url.startswith('postgres://') or url.startswith('postgresql://'):
+              u = urlparse(url)
+              host = u.hostname
+              port = u.port or 5432
+              db = (u.path or '').lstrip('/')
+              if not host or not db:
+                raise SystemExit('Database URL must include host and database name.')
 
-          lines = [f"{k}={v}" for k, v in data.items() if v is not None and v != '']
-          env_file.write_text(("\n".join(lines) + ("\n" if lines else "")), encoding='utf-8')
+              q = dict(parse_qsl(u.query, keep_blank_values=True))
+              if 'sslmode' not in q:
+                q['sslmode'] = 'require'
+              query = urlencode(q)
+
+              jdbc = f"jdbc:postgresql://{host}:{port}/{db}"
+              if query:
+                jdbc += f"?{query}"
+
+              user = u.username or ''
+              pw = u.password or ''
+              return jdbc, user, pw
+
+            raise SystemExit(
+              "Database URL must be a JDBC URL (jdbc:postgresql://...) or a libpq URL (postgres://... or postgresql://...)."
+            )
+
+          # Prefer explicit ALPINE_DATABASE_URL; fall back to legacy DTRACK_DB_URL.
+          source_url = alpine_url or dtrack_db_url
+          jdbc_url, parsed_user, parsed_pass = to_jdbc(source_url)
+
+          # If caller provided user/pass separately, keep them; otherwise use parsed credentials (if present).
+          if not alpine_user and parsed_user:
+            alpine_user = parsed_user
+          if not alpine_pass and parsed_pass:
+            alpine_pass = parsed_pass
+
+          data = {
+            'ALPINE_DATABASE_MODE': alpine_mode or 'external',
+            'ALPINE_DATABASE_URL': jdbc_url,
+            'ALPINE_DATABASE_USERNAME': alpine_user,
+            'ALPINE_DATABASE_PASSWORD': alpine_pass,
+          }
+
+          missing = [k for k in ('ALPINE_DATABASE_URL','ALPINE_DATABASE_USERNAME','ALPINE_DATABASE_PASSWORD') if not data.get(k)]
+          if missing:
+            raise SystemExit(f"Missing required database keys for Dependency-Track: {', '.join(missing)}")
+
+          env_file.write_text("\n".join([f"{k}={v}" for k, v in data.items()]) + "\n", encoding='utf-8')
           PY
 
           kubectl --namespace="${DTRACK_NAMESPACE}" create secret generic "${DTRACK_APP_CONFIG_SECRET_NAME}" \
@@ -413,23 +449,16 @@ jobs:
           import os, json
           from pathlib import Path
 
-          # Prefer per-component registries when explicitly set; otherwise inherit the global registry.
-          global_registry = os.environ.get('DTRACK_IMAGE_REGISTRY','')
-          api_registry = os.environ.get('DTRACK_APISERVER_IMAGE_REGISTRY','') or global_registry
-          fe_registry = os.environ.get('DTRACK_FRONTEND_IMAGE_REGISTRY','') or global_registry
-
           repl = {
-            '<DTRACK_IMAGE_REGISTRY>': global_registry,
+            '<REGISTRY_SERVER>': os.environ.get('REGISTRY_SERVER',''),
             '<IMAGE_PULL_SECRET_NAME>': os.environ.get('IMAGE_PULL_SECRET_NAME',''),
 
             '<DTRACK_SECRET_KEY_CREATE>': (os.environ.get('DTRACK_SECRET_KEY_CREATE','true') or 'true').lower(),
             '<DTRACK_SECRET_KEY_EXISTING_SECRET_NAME>': os.environ.get('DTRACK_SECRET_KEY_EXISTING_SECRET_NAME',''),
 
-            '<DTRACK_APISERVER_IMAGE_REGISTRY>': api_registry,
             '<DTRACK_APISERVER_IMAGE_REPOSITORY>': os.environ.get('DTRACK_APISERVER_IMAGE_REPOSITORY','dependencytrack/apiserver'),
             '<DTRACK_APISERVER_IMAGE_TAG>': os.environ.get('DTRACK_APISERVER_IMAGE_TAG',''),
 
-            '<DTRACK_FRONTEND_IMAGE_REGISTRY>': fe_registry,
             '<DTRACK_FRONTEND_IMAGE_REPOSITORY>': os.environ.get('DTRACK_FRONTEND_IMAGE_REPOSITORY','dependencytrack/frontend'),
             '<DTRACK_FRONTEND_IMAGE_TAG>': os.environ.get('DTRACK_FRONTEND_IMAGE_TAG',''),
 
@@ -458,7 +487,6 @@ jobs:
           for k, v in repl.items():
             text = text.replace(k, str(v))
 
-          # Replace JSON placeholder with compact flow-mapping JSON (valid YAML mapping).
           text = text.replace('<DTRACK_INGRESS_ANNOTATIONS_JSON>', json.dumps(ann, separators=(',',':')))
 
           out = Path(os.environ['RUNNER_TEMP']) / 'values.generated.yaml'
@@ -468,7 +496,7 @@ jobs:
 
           test -s "${RUNNER_TEMP}/values.generated.yaml"
 
-      - name: Install/upgrade Dependency-Track (official chart; images pulled from Nexus)
+      - name: Install/upgrade Dependency-Track (official chart; images pulled from registry)
         shell: bash
         run: |
           set -euo pipefail

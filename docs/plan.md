@@ -23,7 +23,8 @@ The workflow is manually triggered via `workflow_dispatch` and requires selectin
    - Image pull secret in `dependency-track`.
    - TLS secret in `dependency-track` from `WILDCARD_CRT`/`WILDCARD_KEY`.
    - App config secret (always created/updated) containing database configuration.
-     - `DTRACK_DB_URL` is required and is mapped to `ALPINE_DATABASE_URL` for the API server.
+     - External Postgres is configured via `ALPINE_DATABASE_URL` / `ALPINE_DATABASE_USERNAME` / `ALPINE_DATABASE_PASSWORD`.
+       `DTRACK_DB_URL` is supported as a legacy fallback if `ALPINE_DATABASE_URL` is empty.
      - If `ALPINE_DATABASE_*` keys are also provided, they override the defaults.
 6. Render `helm/dependency-track/values.generated.yaml` from `values.template.yaml`.
 7. `helm upgrade --install` the `dependencytrack/dependency-track` chart with `--wait --atomic`.
@@ -42,11 +43,13 @@ It echoes the resolved values early in the job; if a value was sourced from secr
 - Azure: `DEPLOY_CLIENT_ID`, `DEPLOY_SECRET`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`
 - AKS: `AKS_RESOURCE_GROUP`, `AKS_CLUSTER_NAME`
 - Ingress: `DTRACK_INGRESS_HOST`, `DTRACK_INGRESS_CLASS_NAME`, `INGRESS_TLS_SECRET_NAME`, `WILDCARD_CRT`, `WILDCARD_KEY`
-- Nexus pull: `NEXUS_DOCKER_SERVER`, `NEXUS_DOCKER_USERNAME`, `NEXUS_DOCKER_PASSWORD`, `IMAGE_PULL_SECRET_NAME`
-- Database: `DTRACK_DB_URL` (JDBC URL; mapped to `ALPINE_DATABASE_URL` for the API server)
-- Images: `DTRACK_IMAGE_REGISTRY` (+ optional repositories/tags)
+- Registry pull (Nexus): `REGISTRY_SERVER`, `REGISTRY_USERNAME`, `REGISTRY_PASSWORD`, `IMAGE_PULL_SECRET_NAME`
+- Database (required): `ALPINE_DATABASE_URL` + `ALPINE_DATABASE_USERNAME` + `ALPINE_DATABASE_PASSWORD`
+  - Preferred URL format: `jdbc:postgresql://host:5432/db?sslmode=require`
+  - A libpq URL (`postgres://user:pass@host:5432/db`) is accepted and converted to JDBC at runtime.
 
 ### Optional
 
-- Advanced DB env overrides (if you do not want to rely on `DTRACK_DB_URL`):
-  - `ALPINE_DATABASE_MODE`, `ALPINE_DATABASE_URL`, `ALPINE_DATABASE_USERNAME`, `ALPINE_DATABASE_PASSWORD`
+- Legacy compatibility:
+  - `DTRACK_DB_URL` can be set instead of `ALPINE_DATABASE_URL` and will be used as a fallback.
+  - `ALPINE_DATABASE_MODE` is optional; default is `external`.

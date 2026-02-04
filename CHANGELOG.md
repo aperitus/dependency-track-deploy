@@ -1,5 +1,19 @@
 # Changelog
 
+
+## v0.1.9
+- Regenerated the **base** repository package (no admin-password bootstrap logic and no backup placeholders).
+
+
+## v0.1.8
+- Simplified registry handling: all Dependency-Track images now use `REGISTRY_SERVER` (no per-component registry overrides).
+- Replaced `NEXUS_DOCKER_SERVER`/`NEXUS_DOCKER_USERNAME`/`NEXUS_DOCKER_PASSWORD` with `REGISTRY_SERVER`/`REGISTRY_USERNAME`/`REGISTRY_PASSWORD` throughout the workflow and docs.
+
+## v0.1.7
+- Database configuration now prefers `ALPINE_DATABASE_URL` / `ALPINE_DATABASE_USERNAME` / `ALPINE_DATABASE_PASSWORD` (external Postgres). `DTRACK_DB_URL` is supported as a legacy fallback.
+- Added automatic conversion of libpq URLs (`postgres://...`) to JDBC (`jdbc:postgresql://...`) and enforces `sslmode=require` when absent.
+- Early debug output no longer prints non-JDBC DB URLs to avoid accidental credential leakage.
+
 ## v0.1.6
 - Fixed workflow failure: export ENV_FILE before Python reads it in the app-config secret step.
 - Added a normalisation step to set AZURE_CONFIG_DIR and KUBECONFIG to resolved ${RUNNER_TEMP} paths (job-level values use literal $RUNNER_TEMP).

@@ -3,7 +3,7 @@
 
 common:
   image:
-    registry: "<DTRACK_IMAGE_REGISTRY>"
+    registry: "<REGISTRY_SERVER>"
     pullSecrets:
       - name: "<IMAGE_PULL_SECRET_NAME>"
 
@@ -18,7 +18,7 @@ common:
 
 apiServer:
   image:
-    registry: "<DTRACK_APISERVER_IMAGE_REGISTRY>"
+    registry: "<REGISTRY_SERVER>"
     repository: "<DTRACK_APISERVER_IMAGE_REPOSITORY>"
     tag: "<DTRACK_APISERVER_IMAGE_TAG>"
 
@@ -33,7 +33,7 @@ apiServer:
 
 frontend:
   image:
-    registry: "<DTRACK_FRONTEND_IMAGE_REGISTRY>"
+    registry: "<REGISTRY_SERVER>"
     repository: "<DTRACK_FRONTEND_IMAGE_REPOSITORY>"
     tag: "<DTRACK_FRONTEND_IMAGE_TAG>"
 
