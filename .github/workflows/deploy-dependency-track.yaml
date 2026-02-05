@@ -323,7 +323,7 @@ jobs:
             exit 1
           fi
 
-          # If base64 key material is provided (recommended), we will:
+          # If base64 key material is provided (recommended):
           # - ensure an existing secret name (default if empty)
           # - create the K8s secret if missing
           # - refuse to rotate if it exists but differs
