@@ -1,6 +1,20 @@
 # Changelog
 
 
+## v0.1.11
+- Added `DTRACK_SECRET_KEY` (GitHub Environment Secret) support to **master** the Dependency-Track secret key in Key Vault and keep it stable across redeploys/migrations.
+  - If `DTRACK_SECRET_KEY` is set, the workflow creates the Kubernetes secret (if missing) and **verifies it matches** on every run.
+  - If the cluster secret exists but differs, the workflow fails to prevent accidental crypto key rotation.
+  - When `DTRACK_SECRET_KEY` is set, the workflow forces `DTRACK_SECRET_KEY_CREATE=false` and sets a default `DTRACK_SECRET_KEY_EXISTING_SECRET_NAME` if empty.
+- README updated with generation and migration-safe export guidance.
+
+
+## v0.1.10
+- Fixed a common deployment failure when `common.secretKey.existingSecretName` is set but the referenced secret does not exist.
+  - If `DTRACK_SECRET_KEY_EXISTING_SECRET_NAME` is set, the workflow now creates the secret **once** (only if missing) with a random 32-byte key.
+  - If `DTRACK_SECRET_KEY_CREATE=true`, the workflow now forces `existingSecretName` empty in the rendered values to avoid accidental secret mounts.
+
+
 ## v0.1.9
 - Regenerated the **base** repository package (no admin-password bootstrap logic and no backup placeholders).
 

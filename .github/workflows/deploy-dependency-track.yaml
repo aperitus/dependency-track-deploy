@@ -100,6 +100,10 @@ jobs:
       DTRACK_FRONTEND_API_BASE_URL: ${{ (vars.DTRACK_FRONTEND_API_BASE_URL != '' && vars.DTRACK_FRONTEND_API_BASE_URL) || (secrets.DTRACK_FRONTEND_API_BASE_URL != '' && secrets.DTRACK_FRONTEND_API_BASE_URL) || '' }}
       DTRACK_SECRET_KEY_CREATE: ${{ (vars.DTRACK_SECRET_KEY_CREATE != '' && vars.DTRACK_SECRET_KEY_CREATE) || (secrets.DTRACK_SECRET_KEY_CREATE != '' && secrets.DTRACK_SECRET_KEY_CREATE) || 'true' }}
       DTRACK_SECRET_KEY_EXISTING_SECRET_NAME: ${{ (vars.DTRACK_SECRET_KEY_EXISTING_SECRET_NAME != '' && vars.DTRACK_SECRET_KEY_EXISTING_SECRET_NAME) || (secrets.DTRACK_SECRET_KEY_EXISTING_SECRET_NAME != '' && secrets.DTRACK_SECRET_KEY_EXISTING_SECRET_NAME) || '' }}
+
+      # Optional: Base64 secret key material (32+ bytes). Prefer storing in Key Vault and syncing as a GitHub Environment Secret.
+      # If set, the workflow will ensure the Kubernetes secret exists and matches (refuses rotation).
+      DTRACK_SECRET_KEY: ${{ secrets.DTRACK_SECRET_KEY }}
       DTRACK_INGRESS_ANNOTATIONS_JSON: ${{ (vars.DTRACK_INGRESS_ANNOTATIONS_JSON != '' && vars.DTRACK_INGRESS_ANNOTATIONS_JSON) || (secrets.DTRACK_INGRESS_ANNOTATIONS_JSON != '' && secrets.DTRACK_INGRESS_ANNOTATIONS_JSON) || '{}' }}
 
       # PV placeholders (explicit defaults)
@@ -224,9 +228,28 @@ jobs:
           : "${ALPINE_DATABASE_USERNAME:?ALPINE_DATABASE_USERNAME empty}"
           : "${ALPINE_DATABASE_PASSWORD:?ALPINE_DATABASE_PASSWORD empty}"
 
+          # Validate DTRACK_SECRET_KEY (if provided)
+          if [[ -n "${DTRACK_SECRET_KEY:-}" ]]; then
+            python3 - <<'PY'
+          import base64, os, sys
+          s = os.environ.get('DTRACK_SECRET_KEY', '')
+          try:
+            raw = base64.b64decode(s, validate=True)
+          except Exception as e:
+            print(f"ERROR: DTRACK_SECRET_KEY is not valid base64: {e}", file=sys.stderr)
+            sys.exit(1)
+          if len(raw) < 32:
+            print(f"ERROR: DTRACK_SECRET_KEY decodes to {len(raw)} bytes; expected at least 32 bytes", file=sys.stderr)
+            sys.exit(1)
+          if len(raw) != 32:
+            print(f"WARNING: DTRACK_SECRET_KEY decodes to {len(raw)} bytes (not 32); continuing", file=sys.stderr)
+          PY
+          fi
+
           if [[ -z "${ALPINE_DATABASE_MODE:-}" ]]; then
             echo "ALPINE_DATABASE_MODE=external" >> "${GITHUB_ENV}"
           fi
+
 
           # Normalise Helm timeout:
           # - If value is purely numeric (e.g. "10"), treat as minutes ("10m")
@@ -284,6 +307,106 @@ jobs:
         run: |
           set -euo pipefail
           kubectl get namespace "${DTRACK_NAMESPACE}" >/dev/null 2>&1 || kubectl create namespace "${DTRACK_NAMESPACE}"
+
+      - name: Ensure Dependency-Track secret key secret (stable crypto key)
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+
+          CREATE_RAW="${DTRACK_SECRET_KEY_CREATE:-true}"
+          CREATE="$(echo "${CREATE_RAW}" | tr '[:upper:]' '[:lower:]')"
+          EXISTING="${DTRACK_SECRET_KEY_EXISTING_SECRET_NAME:-}"
+
+          if [[ "${CREATE}" != "true" && "${CREATE}" != "false" ]]; then
+            echo "ERROR: DTRACK_SECRET_KEY_CREATE must be 'true' or 'false'. Got: '${CREATE_RAW}'" >&2
+            exit 1
+          fi
+
+          # If base64 key material is provided (recommended), we will:
+          # - ensure an existing secret name (default if empty)
+          # - create the K8s secret if missing
+          # - refuse to rotate if it exists but differs
+          # - force the chart to use existingSecretName and not auto-generate
+          if [[ -n "${DTRACK_SECRET_KEY:-}" ]]; then
+            if [[ -z "${EXISTING}" ]]; then
+              EXISTING="dtrack-secret-key"
+            fi
+
+            echo "DTRACK_SECRET_KEY_CREATE=false" >> "${GITHUB_ENV}"
+            echo "DTRACK_SECRET_KEY_EXISTING_SECRET_NAME=${EXISTING}" >> "${GITHUB_ENV}"
+
+            if kubectl --namespace="${DTRACK_NAMESPACE}" get secret "${EXISTING}" >/dev/null 2>&1; then
+              existing_val="$(kubectl --namespace="${DTRACK_NAMESPACE}" get secret "${EXISTING}" -o jsonpath='{.data.secret\.key}' 2>/dev/null || true)"
+              if [[ -z "${existing_val}" ]]; then
+                existing_val="$(kubectl --namespace="${DTRACK_NAMESPACE}" get secret "${EXISTING}" -o jsonpath='{.data.secretKey}' 2>/dev/null || true)"
+              fi
+
+              if [[ -z "${existing_val}" ]]; then
+                echo "ERROR: Secret '${EXISTING}' exists but does not contain data key 'secret.key' or 'secretKey'." >&2
+                exit 1
+              fi
+
+              if [[ "${existing_val}" != "${DTRACK_SECRET_KEY}" ]]; then
+                echo "ERROR: Secret '${EXISTING}' exists but does not match DTRACK_SECRET_KEY. Refusing to rotate." >&2
+                echo "Action: export the current cluster value and set it into Key Vault so it matches before re-running." >&2
+                echo "Example: kubectl -n ${DTRACK_NAMESPACE} get secret ${EXISTING} -o jsonpath='{.data.secret\.key}'" >&2
+                exit 1
+              fi
+
+              echo "Secret key secret exists and matches: ${EXISTING}"
+              exit 0
+            fi
+
+            echo "Secret key secret missing; creating from DTRACK_SECRET_KEY: ${EXISTING}"
+            cat <<EOF | kubectl apply --filename=-
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: ${EXISTING}
+            namespace: ${DTRACK_NAMESPACE}
+          type: Opaque
+          data:
+            secret.key: ${DTRACK_SECRET_KEY}
+            secretKey: ${DTRACK_SECRET_KEY}
+          EOF
+            echo "Created secret key secret: ${EXISTING}"
+            exit 0
+          fi
+
+          # No DTRACK_SECRET_KEY provided. Fall back to legacy behavior:
+          # - if an existing secret name is provided, create it once (random) if missing
+          # - otherwise, allow the chart to create/manage the secret key if DTRACK_SECRET_KEY_CREATE=true
+          if [[ -n "${EXISTING}" ]]; then
+            echo "DTRACK_SECRET_KEY_CREATE=false" >> "${GITHUB_ENV}"
+
+            if kubectl --namespace="${DTRACK_NAMESPACE}" get secret "${EXISTING}" >/dev/null 2>&1; then
+              echo "Secret key secret exists: ${EXISTING}"
+              exit 0
+            fi
+
+            echo "Secret key secret missing; creating (random): ${EXISTING}"
+
+            KEY_FILE="${RUNNER_TEMP}/dtrack.secret.key"
+            openssl rand 32 > "${KEY_FILE}"
+            chmod 600 "${KEY_FILE}"
+
+            kubectl --namespace="${DTRACK_NAMESPACE}" create secret generic "${EXISTING}" \
+              --from-file=secret.key="${KEY_FILE}" \
+              --from-file=secretKey="${KEY_FILE}"
+
+            echo "Created secret key secret: ${EXISTING}"
+            exit 0
+          fi
+
+          # No existing secret specified.
+          echo "DTRACK_SECRET_KEY_CREATE=${CREATE}" >> "${GITHUB_ENV}"
+          if [[ "${CREATE}" == "false" ]]; then
+            echo "ERROR: DTRACK_SECRET_KEY_CREATE=false but DTRACK_SECRET_KEY_EXISTING_SECRET_NAME is empty." >&2
+            echo "Set DTRACK_SECRET_KEY_EXISTING_SECRET_NAME to an existing secret name, or set DTRACK_SECRET_KEY_CREATE=true." >&2
+            exit 1
+          fi
+
 
       - name: Create/update imagePullSecret (registry) in dependency-track namespace
         shell: bash
@@ -449,12 +572,18 @@ jobs:
           import os, json
           from pathlib import Path
 
+          create_secret_key = (os.environ.get('DTRACK_SECRET_KEY_CREATE','true') or 'true').lower()
+          existing_secret_name = os.environ.get('DTRACK_SECRET_KEY_EXISTING_SECRET_NAME','')
+          if create_secret_key == 'true':
+            # Prevent the chart from trying to mount a non-existent existing secret when createSecret is enabled.
+            existing_secret_name = ''
+
           repl = {
             '<REGISTRY_SERVER>': os.environ.get('REGISTRY_SERVER',''),
             '<IMAGE_PULL_SECRET_NAME>': os.environ.get('IMAGE_PULL_SECRET_NAME',''),
 
-            '<DTRACK_SECRET_KEY_CREATE>': (os.environ.get('DTRACK_SECRET_KEY_CREATE','true') or 'true').lower(),
-            '<DTRACK_SECRET_KEY_EXISTING_SECRET_NAME>': os.environ.get('DTRACK_SECRET_KEY_EXISTING_SECRET_NAME',''),
+            '<DTRACK_SECRET_KEY_CREATE>': create_secret_key,
+            '<DTRACK_SECRET_KEY_EXISTING_SECRET_NAME>': existing_secret_name,
 
             '<DTRACK_APISERVER_IMAGE_REPOSITORY>': os.environ.get('DTRACK_APISERVER_IMAGE_REPOSITORY','dependencytrack/apiserver'),
             '<DTRACK_APISERVER_IMAGE_TAG>': os.environ.get('DTRACK_APISERVER_IMAGE_TAG',''),

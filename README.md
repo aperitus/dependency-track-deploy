@@ -22,9 +22,41 @@ The workflow resolves each key using a **vars-first fallback**:
 - If `vars.<KEY>` is non-empty, it is used.
 - Otherwise `secrets.<KEY>` is used.
 
-## Configuration reference
+## Persisting the Dependency-Track secret key
 
-### Workflow inputs (Actions → Run workflow)
+Dependency-Track uses a **stable application secret key** for crypto (tokens, etc.). If this key changes between deployments, existing encrypted material can become unusable.
+
+Recommended practice is to **master the key in Key Vault** (as a GitHub Environment Secret via your secret-sync tool) and have this repo **create/verify** the Kubernetes secret on deploy.
+
+### New deployment (recommended)
+
+1. Generate 32 bytes of random key material and base64 encode it (single line):
+
+   ```bash
+   openssl rand 32 | base64 -w 0
+   ```
+
+2. Store the base64 output in Key Vault as a secret whose name maps to `DTRACK_SECRET_KEY`, e.g.:
+
+   - Key Vault secret name: `auto--dependency-track-deploy--dtrack-secret-key`
+   - Tag: *none* (this is sensitive, so it should sync as a GitHub **secret**)
+
+3. Set/leave `DTRACK_SECRET_KEY_EXISTING_SECRET_NAME` (optional). If unset, the workflow defaults to `dtrack-secret-key` when `DTRACK_SECRET_KEY` is provided.
+
+4. Run the workflow. It will create the Kubernetes secret if missing, and then configure Helm to use it.
+
+### Existing deployment (avoid rotation)
+
+If a secret key secret already exists in the cluster, do **not** generate a new one. Instead, export the current base64 value and store that in Key Vault:
+
+```bash
+kubectl -n dependency-track get secret dtrack-secret-key -o jsonpath='{.data.secret\.key}'
+```
+
+Store the returned base64 string in Key Vault (same name as above), let it sync to GitHub, then re-run the deploy.
+
+The workflow will **fail** if the in-cluster secret and `DTRACK_SECRET_KEY` differ. This is intentional to prevent accidental crypto key rotation.
+## Workflow inputs (Actions → Run workflow)
 
 | Input | Required | Description | Example |
 |---|---:|---|---|
@@ -68,8 +100,9 @@ The workflow resolves each key using a **vars-first fallback**:
 | `DTRACK_APISERVER_IMAGE_TAG` | Var (or Secret) | No | Optional apiserver image tag override. Empty means chart default (usually appVersion). | `4.11.0` |
 | `DTRACK_FRONTEND_IMAGE_TAG` | Var (or Secret) | No | Optional frontend image tag override. Empty means chart default (usually appVersion). | `4.11.0` |
 | `DTRACK_FRONTEND_API_BASE_URL` | Var (or Secret) | No | Optional override for frontend API base URL (rare; only if your frontend must point at a non-standard API URL). | `https://dtrack.logiki.co.uk/api` |
-| `DTRACK_SECRET_KEY_CREATE` | Var (or Secret) | No | If `true`, workflow generates a random secret key and stores it in a K8s secret. Default: `true`. | `true` |
-| `DTRACK_SECRET_KEY_EXISTING_SECRET_NAME` | Var (or Secret) | No | If set, uses an existing K8s secret containing the secret key instead of generating one. | `dtrack-secret-key` |
+| `DTRACK_SECRET_KEY_CREATE` | Var (or Secret) | No | If `true`, the Helm chart will generate and manage a secret key in-cluster. Default: `true`. If you set `DTRACK_SECRET_KEY_EXISTING_SECRET_NAME` (or provide `DTRACK_SECRET_KEY`), this flag is forced to `false`. | `true` |
+| `DTRACK_SECRET_KEY_EXISTING_SECRET_NAME` | Var (or Secret) | No | If set, use this K8s secret name for the secret key. If it does not exist, the workflow creates it once (and will not overwrite it on future runs). | `dtrack-secret-key` |
+| `DTRACK_SECRET_KEY` | Secret | No | Base64-encoded secret-key material (at least 32 bytes). If set, the workflow creates/verifies the Kubernetes secret (and refuses rotation if it mismatches). Recommended to master this in Key Vault for migration. | `b64...` |
 | `DTRACK_INGRESS_ANNOTATIONS_JSON` | Var (or Secret) | No | JSON object of annotations to apply to the Ingress. Must be valid JSON object. Default: `{}`. | `{ "traefik.ingress.kubernetes.io/router.entrypoints": "websecure" }` |
 | `DTRACK_APISERVER_PV_ENABLED` | Var (or Secret) | No | Placeholder for PV enablement (chart-dependent). Default: `false`. | `false` |
 | `DTRACK_APISERVER_PV_CLASSNAME` | Var (or Secret) | No | Placeholder for storageClassName if PV enabled. | `managed-csi` |
