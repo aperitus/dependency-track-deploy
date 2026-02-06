@@ -63,8 +63,11 @@ The workflow will **fail** if the in-cluster secret and `DTRACK_SECRET_KEY` diff
 | `environment` | Yes | GitHub Environment to use for variables/secrets. | `dev` |
 | `use_admin_credentials` | No | If `true`, uses AKS **admin** kubeconfig (`az aks get-credentials --admin`). | `false` |
 | `helm_timeout` | No | Helm timeout. If numeric, treated as minutes; otherwise must include unit suffix (`s`, `m`, `h`). | `15m` or `10` |
+| `dtrack_debug` | No | If `true`, sets `LOGGING_LEVEL=DEBUG` for the API server and prints additional diagnostics steps. | `true` |
 
 ### Environment keys (vars/secrets)
+
+When `dtrack_debug` is enabled, the workflow appends `LOGGING_LEVEL=DEBUG` to the API server app-config secret. Dependency-Track supports setting `LOGGING_LEVEL` to `DEBUG`/`TRACE` in Docker deployments for more verbose logs.
 
 **Guidance:** store sensitive values as **Environment Secrets** (recommended). Non-sensitive values can be Environment Variables.
 

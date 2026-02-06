@@ -24,6 +24,12 @@ on:
         type: string
         default: "15m"
 
+      dtrack_debug:
+        description: Enable Dependency-Track debug logging (sets LOGGING_LEVEL=DEBUG)
+        required: false
+        type: boolean
+        default: false
+
 concurrency:
   group: dependency-track-deploy-${{ inputs.environment }}
   cancel-in-progress: false
@@ -44,6 +50,7 @@ jobs:
 
       # Helm timeout (validated/normalised in a step below)
       HELM_TIMEOUT: ${{ inputs.helm_timeout }}
+      DTRACK_DEBUG: ${{ inputs.dtrack_debug }}
 
       # ----------------------------------------------------------------------
       # Vars-first fallback to secrets (no resolver script)
@@ -323,7 +330,7 @@ jobs:
             exit 1
           fi
 
-          # If base64 key material is provided (recommended):
+          # If base64 key material is provided (recommended), we will:
           # - ensure an existing secret name (default if empty)
           # - create the K8s secret if missing
           # - refuse to rotate if it exists but differs
@@ -641,6 +648,29 @@ jobs:
 
           kubectl --namespace="${DTRACK_NAMESPACE}" get pods --output=wide
           kubectl --namespace="${DTRACK_NAMESPACE}" get svc --output=wide
+
+
+      - name: Force apiserver restart (debug enabled)
+        if: ${{ inputs.dtrack_debug == true }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          kubectl --namespace="${DTRACK_NAMESPACE}" rollout restart deploy -l app.kubernetes.io/name=dependency-track-apiserver || true
+          kubectl --namespace="${DTRACK_NAMESPACE}" rollout status deploy -l app.kubernetes.io/name=dependency-track-apiserver --timeout=5m || true
+
+      - name: Diagnostics (debug enabled)
+        if: ${{ inputs.dtrack_debug == true }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo \"== Pods ==\"
+          kubectl --namespace=\"${DTRACK_NAMESPACE}\" get pods -o wide || true
+          echo \"== Describe apiserver pod(s) ==\"
+          kubectl --namespace=\"${DTRACK_NAMESPACE}\" describe pod -l app.kubernetes.io/name=dependency-track-apiserver || true
+          echo \"== Logs (apiserver) ==\"
+          kubectl --namespace=\"${DTRACK_NAMESPACE}\" logs -l app.kubernetes.io/name=dependency-track-apiserver --all-containers=true --tail=300 || true
+          echo \"== Previous logs (apiserver) ==\"
+          kubectl --namespace=\"${DTRACK_NAMESPACE}\" logs -l app.kubernetes.io/name=dependency-track-apiserver --all-containers=true --tail=300 --previous || true
 
       - name: Post-deploy checks
         shell: bash
