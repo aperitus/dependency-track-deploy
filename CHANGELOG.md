@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.2.8
+
+- Fix (GHES compatibility): remove unsupported `runner.*` contexts. Initialise `AZURE_CONFIG_DIR` and `KUBECONFIG` in-job using `$RUNNER_TEMP` via `$GITHUB_ENV`.
+- Fix: debug artefacts are written to a workspace `debug/` folder and uploaded from there (no `runner.temp` usage).
+- Fix: compliance document filename corrected to `Dependency-Track Deploy — Authoritative Design & Compliance.md`.
+
 ## v0.2.7
 
 - Fix: apply `--admin` flag consistently in debug job when `use_admin_credentials=true`.

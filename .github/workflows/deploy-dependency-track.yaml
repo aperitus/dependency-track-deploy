@@ -46,10 +46,7 @@ jobs:
     timeout-minutes: 30
 
     env:
-      # Keep Azure CLI state isolated and avoid cross-job contamination.
-      AZURE_CONFIG_DIR: ${{ runner.temp }}/.azure
-      KUBECONFIG: ${{ runner.temp }}/kubeconfig
-
+      # Keep Azure CLI state isolated and avoid cross-job contamination (initialised in the first step from RUNNER_TEMP).
       # Inputs
       HELM_TIMEOUT: ${{ inputs.helm_timeout }}
       DEBUG: ${{ inputs.debug }}
@@ -118,6 +115,15 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Init runtime paths (AZURE_CONFIG_DIR, KUBECONFIG)
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p "${RUNNER_TEMP}/.azure"
+          echo "AZURE_CONFIG_DIR=${RUNNER_TEMP}/.azure" >> "${GITHUB_ENV}"
+          echo "KUBECONFIG=${RUNNER_TEMP}/kubeconfig" >> "${GITHUB_ENV}"
 
       - name: Verify toolchain on runner
         shell: bash
@@ -479,9 +485,6 @@ jobs:
     timeout-minutes: 30
 
     env:
-      AZURE_CONFIG_DIR: ${{ runner.temp }}/.azure
-      KUBECONFIG: ${{ runner.temp }}/kubeconfig
-
       HELM_TIMEOUT: ${{ inputs.helm_timeout }}
 
       USE_ADMIN_CREDENTIALS: ${{ inputs.use_admin_credentials }}
@@ -523,6 +526,15 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Init runtime paths (AZURE_CONFIG_DIR, KUBECONFIG)
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p "${RUNNER_TEMP}/.azure"
+          echo "AZURE_CONFIG_DIR=${RUNNER_TEMP}/.azure" >> "${GITHUB_ENV}"
+          echo "KUBECONFIG=${RUNNER_TEMP}/kubeconfig" >> "${GITHUB_ENV}"
 
       - name: Azure login (Service Principal + secret)
         shell: bash
@@ -599,9 +611,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p "${RUNNER_TEMP}/debug"
+          DEBUG_DIR="${GITHUB_WORKSPACE}/debug"
+          mkdir -p "${DEBUG_DIR}"
 
-          cp -f "${RUNNER_TEMP}/values.generated.yaml" "${RUNNER_TEMP}/debug/values.generated.yaml"
+          cp -f "${RUNNER_TEMP}/values.generated.yaml" "${DEBUG_DIR}/values.generated.yaml"
 
           {
             echo "== Helm status ==";
@@ -609,23 +622,23 @@ jobs:
             echo;
             echo "== Helm values ==";
             helm -n "${DTRACK_NAMESPACE}" get values "${DTRACK_RELEASE_NAME}" || true;
-          } > "${RUNNER_TEMP}/debug/helm.txt" 2>&1
+          } > "${DEBUG_DIR}/helm.txt" 2>&1
 
-          kubectl -n "${DTRACK_NAMESPACE}" get pods -o wide > "${RUNNER_TEMP}/debug/pods.txt" 2>&1 || true
-          kubectl -n "${DTRACK_NAMESPACE}" get svc -o wide > "${RUNNER_TEMP}/debug/svc.txt" 2>&1 || true
-          kubectl -n "${DTRACK_NAMESPACE}" get ingress -o wide > "${RUNNER_TEMP}/debug/ingress.txt" 2>&1 || true
-          kubectl -n "${DTRACK_NAMESPACE}" get statefulset -o wide > "${RUNNER_TEMP}/debug/statefulset.txt" 2>&1 || true
-          kubectl -n "${DTRACK_NAMESPACE}" get deploy -o wide > "${RUNNER_TEMP}/debug/deploy.txt" 2>&1 || true
+          kubectl -n "${DTRACK_NAMESPACE}" get pods -o wide > "${DEBUG_DIR}/pods.txt" 2>&1 || true
+          kubectl -n "${DTRACK_NAMESPACE}" get svc -o wide > "${DEBUG_DIR}/svc.txt" 2>&1 || true
+          kubectl -n "${DTRACK_NAMESPACE}" get ingress -o wide > "${DEBUG_DIR}/ingress.txt" 2>&1 || true
+          kubectl -n "${DTRACK_NAMESPACE}" get statefulset -o wide > "${DEBUG_DIR}/statefulset.txt" 2>&1 || true
+          kubectl -n "${DTRACK_NAMESPACE}" get deploy -o wide > "${DEBUG_DIR}/deploy.txt" 2>&1 || true
 
-          kubectl -n "${DTRACK_NAMESPACE}" get events --sort-by=.lastTimestamp > "${RUNNER_TEMP}/debug/events.txt" 2>&1 || true
+          kubectl -n "${DTRACK_NAMESPACE}" get events --sort-by=.lastTimestamp > "${DEBUG_DIR}/events.txt" 2>&1 || true
 
-          kubectl -n "${DTRACK_NAMESPACE}" describe pod -l app.kubernetes.io/component=api-server > "${RUNNER_TEMP}/debug/describe-api-server.txt" 2>&1 || true
-          kubectl -n "${DTRACK_NAMESPACE}" logs -l app.kubernetes.io/component=api-server --all-containers=true --tail=300 > "${RUNNER_TEMP}/debug/logs-api-server.txt" 2>&1 || true
-          kubectl -n "${DTRACK_NAMESPACE}" logs -l app.kubernetes.io/component=api-server --all-containers=true --tail=300 --previous > "${RUNNER_TEMP}/debug/logs-api-server-previous.txt" 2>&1 || true
+          kubectl -n "${DTRACK_NAMESPACE}" describe pod -l app.kubernetes.io/component=api-server > "${DEBUG_DIR}/describe-api-server.txt" 2>&1 || true
+          kubectl -n "${DTRACK_NAMESPACE}" logs -l app.kubernetes.io/component=api-server --all-containers=true --tail=300 > "${DEBUG_DIR}/logs-api-server.txt" 2>&1 || true
+          kubectl -n "${DTRACK_NAMESPACE}" logs -l app.kubernetes.io/component=api-server --all-containers=true --tail=300 --previous > "${DEBUG_DIR}/logs-api-server-previous.txt" 2>&1 || true
 
       - name: Upload debug artefacts
         uses: actions/upload-artifact@v4
         with:
           name: dependency-track-debug-${{ inputs.environment }}-${{ github.run_id }}
-          path: ${{ runner.temp }}/debug
+          path: debug
           if-no-files-found: warn
