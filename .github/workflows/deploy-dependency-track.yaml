@@ -12,6 +12,12 @@ on:
           - preprod
           - prod
 
+      debug:
+        description: Enable debug mode (extra app logging + debug artefacts job)
+        required: false
+        type: boolean
+        default: false
+
       use_admin_credentials:
         description: Use AKS admin kubeconfig (adds --admin to az aks get-credentials)
         required: false
@@ -19,16 +25,10 @@ on:
         default: false
 
       helm_timeout:
-        description: Helm timeout (optional; defaults to 15m)
+        description: Helm timeout (e.g. 15m, 600s, 1h)
         required: false
         type: string
         default: "15m"
-
-      dtrack_debug:
-        description: Enable Dependency-Track debug logging (sets LOGGING_LEVEL=DEBUG)
-        required: false
-        type: boolean
-        default: false
 
 concurrency:
   group: dependency-track-deploy-${{ inputs.environment }}
@@ -36,6 +36,8 @@ concurrency:
 
 permissions:
   contents: read
+  # Staged for advanced OIDC / Entra federation (optional). Not used in the baseline SP mode.
+  id-token: write
 
 jobs:
   deploy:
@@ -45,18 +47,18 @@ jobs:
 
     env:
       # Keep Azure CLI state isolated and avoid cross-job contamination.
-      AZURE_CONFIG_DIR: $RUNNER_TEMP/.azure
-      KUBECONFIG: $RUNNER_TEMP/kubeconfig
+      AZURE_CONFIG_DIR: ${{ runner.temp }}/.azure
+      KUBECONFIG: ${{ runner.temp }}/kubeconfig
 
-      # Helm timeout (validated/normalised in a step below)
+      # Inputs
       HELM_TIMEOUT: ${{ inputs.helm_timeout }}
-      DTRACK_DEBUG: ${{ inputs.dtrack_debug }}
+      DEBUG: ${{ inputs.debug }}
 
       # ----------------------------------------------------------------------
       # Vars-first fallback to secrets (no resolver script)
       # ----------------------------------------------------------------------
 
-      # Azure / AKS
+      # Azure / AKS (baseline auth: SP + secret)
       DEPLOY_CLIENT_ID: ${{ vars.DEPLOY_CLIENT_ID != '' && vars.DEPLOY_CLIENT_ID || secrets.DEPLOY_CLIENT_ID }}
       AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID != '' && vars.AZURE_TENANT_ID || secrets.AZURE_TENANT_ID }}
       AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID != '' && vars.AZURE_SUBSCRIPTION_ID || secrets.AZURE_SUBSCRIPTION_ID }}
@@ -73,14 +75,11 @@ jobs:
       WILDCARD_CRT: ${{ vars.WILDCARD_CRT != '' && vars.WILDCARD_CRT || secrets.WILDCARD_CRT }}
       WILDCARD_KEY: ${{ vars.WILDCARD_KEY != '' && vars.WILDCARD_KEY || secrets.WILDCARD_KEY }}
 
-      # Database (external Postgres)
-      # Preferred: set ALPINE_DATABASE_URL/USERNAME/PASSWORD directly.
-      # Legacy fallback: DTRACK_DB_URL (used only if ALPINE_DATABASE_URL is empty).
-      DTRACK_DB_URL: ${{ vars.DTRACK_DB_URL != '' && vars.DTRACK_DB_URL || secrets.DTRACK_DB_URL }}
-      ALPINE_DATABASE_MODE: ${{ (vars.ALPINE_DATABASE_MODE != '' && vars.ALPINE_DATABASE_MODE) || (secrets.ALPINE_DATABASE_MODE != '' && secrets.ALPINE_DATABASE_MODE) || '' }}
-      ALPINE_DATABASE_URL: ${{ (vars.ALPINE_DATABASE_URL != '' && vars.ALPINE_DATABASE_URL) || (secrets.ALPINE_DATABASE_URL != '' && secrets.ALPINE_DATABASE_URL) || '' }}
-      ALPINE_DATABASE_USERNAME: ${{ (vars.ALPINE_DATABASE_USERNAME != '' && vars.ALPINE_DATABASE_USERNAME) || (secrets.ALPINE_DATABASE_USERNAME != '' && secrets.ALPINE_DATABASE_USERNAME) || '' }}
-      ALPINE_DATABASE_PASSWORD: ${{ (vars.ALPINE_DATABASE_PASSWORD != '' && vars.ALPINE_DATABASE_PASSWORD) || (secrets.ALPINE_DATABASE_PASSWORD != '' && secrets.ALPINE_DATABASE_PASSWORD) || '' }}
+      # Database (external Postgres) - JDBC only (no URL conversion in this repo)
+      ALPINE_DATABASE_MODE: ${{ (vars.ALPINE_DATABASE_MODE != '' && vars.ALPINE_DATABASE_MODE) || (secrets.ALPINE_DATABASE_MODE != '' && secrets.ALPINE_DATABASE_MODE) || 'external' }}
+      ALPINE_DATABASE_URL: ${{ vars.ALPINE_DATABASE_URL != '' && vars.ALPINE_DATABASE_URL || secrets.ALPINE_DATABASE_URL }}
+      ALPINE_DATABASE_USERNAME: ${{ vars.ALPINE_DATABASE_USERNAME != '' && vars.ALPINE_DATABASE_USERNAME || secrets.ALPINE_DATABASE_USERNAME }}
+      ALPINE_DATABASE_PASSWORD: ${{ vars.ALPINE_DATABASE_PASSWORD != '' && vars.ALPINE_DATABASE_PASSWORD || secrets.ALPINE_DATABASE_PASSWORD }}
 
       # Defaults (can be overridden via vars/secrets)
       DTRACK_NAMESPACE: ${{ (vars.DTRACK_NAMESPACE != '' && vars.DTRACK_NAMESPACE) || (secrets.DTRACK_NAMESPACE != '' && secrets.DTRACK_NAMESPACE) || 'dependency-track' }}
@@ -96,6 +95,10 @@ jobs:
       IMAGE_PULL_SECRET_NAME: ${{ (vars.IMAGE_PULL_SECRET_NAME != '' && vars.IMAGE_PULL_SECRET_NAME) || (secrets.IMAGE_PULL_SECRET_NAME != '' && secrets.IMAGE_PULL_SECRET_NAME) || 'nexus-pull' }}
       INGRESS_TLS_SECRET_NAME: ${{ (vars.INGRESS_TLS_SECRET_NAME != '' && vars.INGRESS_TLS_SECRET_NAME) || (secrets.INGRESS_TLS_SECRET_NAME != '' && secrets.INGRESS_TLS_SECRET_NAME) || 'dtrack-wildcard-tls' }}
       DTRACK_APP_CONFIG_SECRET_NAME: ${{ (vars.DTRACK_APP_CONFIG_SECRET_NAME != '' && vars.DTRACK_APP_CONFIG_SECRET_NAME) || (secrets.DTRACK_APP_CONFIG_SECRET_NAME != '' && secrets.DTRACK_APP_CONFIG_SECRET_NAME) || 'dependency-track-app-config' }}
+      DTRACK_SECRET_KEY_EXISTING_SECRET_NAME: ${{ (vars.DTRACK_SECRET_KEY_EXISTING_SECRET_NAME != '' && vars.DTRACK_SECRET_KEY_EXISTING_SECRET_NAME) || (secrets.DTRACK_SECRET_KEY_EXISTING_SECRET_NAME != '' && secrets.DTRACK_SECRET_KEY_EXISTING_SECRET_NAME) || 'dtrack-secret-key' }}
+
+      # Mastered secret key material (base64) - REQUIRED
+      DTRACK_SECRET_KEY: ${{ secrets.DTRACK_SECRET_KEY }}
 
       # Images (always pulled from REGISTRY_SERVER)
       DTRACK_APISERVER_IMAGE_REPOSITORY: ${{ (vars.DTRACK_APISERVER_IMAGE_REPOSITORY != '' && vars.DTRACK_APISERVER_IMAGE_REPOSITORY) || (secrets.DTRACK_APISERVER_IMAGE_REPOSITORY != '' && secrets.DTRACK_APISERVER_IMAGE_REPOSITORY) || 'dependencytrack/apiserver' }}
@@ -105,12 +108,6 @@ jobs:
 
       # Optional
       DTRACK_FRONTEND_API_BASE_URL: ${{ (vars.DTRACK_FRONTEND_API_BASE_URL != '' && vars.DTRACK_FRONTEND_API_BASE_URL) || (secrets.DTRACK_FRONTEND_API_BASE_URL != '' && secrets.DTRACK_FRONTEND_API_BASE_URL) || '' }}
-      DTRACK_SECRET_KEY_CREATE: ${{ (vars.DTRACK_SECRET_KEY_CREATE != '' && vars.DTRACK_SECRET_KEY_CREATE) || (secrets.DTRACK_SECRET_KEY_CREATE != '' && secrets.DTRACK_SECRET_KEY_CREATE) || 'true' }}
-      DTRACK_SECRET_KEY_EXISTING_SECRET_NAME: ${{ (vars.DTRACK_SECRET_KEY_EXISTING_SECRET_NAME != '' && vars.DTRACK_SECRET_KEY_EXISTING_SECRET_NAME) || (secrets.DTRACK_SECRET_KEY_EXISTING_SECRET_NAME != '' && secrets.DTRACK_SECRET_KEY_EXISTING_SECRET_NAME) || '' }}
-
-      # Optional: Base64 secret key material (32+ bytes). Prefer storing in Key Vault and syncing as a GitHub Environment Secret.
-      # If set, the workflow will ensure the Kubernetes secret exists and matches (refuses rotation).
-      DTRACK_SECRET_KEY: ${{ secrets.DTRACK_SECRET_KEY }}
       DTRACK_INGRESS_ANNOTATIONS_JSON: ${{ (vars.DTRACK_INGRESS_ANNOTATIONS_JSON != '' && vars.DTRACK_INGRESS_ANNOTATIONS_JSON) || (secrets.DTRACK_INGRESS_ANNOTATIONS_JSON != '' && secrets.DTRACK_INGRESS_ANNOTATIONS_JSON) || '{}' }}
 
       # PV placeholders (explicit defaults)
@@ -122,18 +119,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Normalise runner temp paths
-        shell: bash
-        run: |
-          set -euo pipefail
-          # Job-level env uses literal $RUNNER_TEMP; normalise to resolved paths for tooling.
-          echo "AZURE_CONFIG_DIR=${RUNNER_TEMP}/.azure" >> "${GITHUB_ENV}"
-          echo "KUBECONFIG=${RUNNER_TEMP}/kubeconfig" >> "${GITHUB_ENV}"
-
-      # ----------------------------------------------------------------------
-      # Reused patterns from deploy-traefik.yaml (tested on your runner)
-      # ----------------------------------------------------------------------
-
       - name: Verify toolchain on runner
         shell: bash
         run: |
@@ -141,15 +126,13 @@ jobs:
           command -v az >/dev/null
           command -v kubectl >/dev/null
           command -v helm >/dev/null
-          command -v python3 >/dev/null
           command -v kubelogin >/dev/null
           command -v openssl >/dev/null
           az version
           kubectl version --client=true
           helm version
-          kubelogin --version || true
 
-      - name: Echo resolved inputs (masked if sourced from secrets)
+      - name: Echo resolved non-sensitive inputs
         shell: bash
         run: |
           set -euo pipefail
@@ -171,28 +154,77 @@ jobs:
           echo "DTRACK_APISERVER_IMAGE_REPOSITORY=${DTRACK_APISERVER_IMAGE_REPOSITORY}"
           echo "DTRACK_FRONTEND_IMAGE_REPOSITORY=${DTRACK_FRONTEND_IMAGE_REPOSITORY}"
           echo "ALPINE_DATABASE_MODE=${ALPINE_DATABASE_MODE}"
-          # Avoid leaking credentials if a non-JDBC URL is accidentally provided via vars.
           if [[ -n "${ALPINE_DATABASE_URL:-}" && "${ALPINE_DATABASE_URL}" == jdbc:postgresql://* ]]; then
             echo "ALPINE_DATABASE_URL=${ALPINE_DATABASE_URL}"
-          elif [[ -n "${ALPINE_DATABASE_URL:-}" ]]; then
-            echo "ALPINE_DATABASE_URL=<non-jdbc: not printed>"
           else
-            echo "ALPINE_DATABASE_URL="
+            echo "ALPINE_DATABASE_URL=<redacted>"
           fi
           echo "ALPINE_DATABASE_USERNAME=${ALPINE_DATABASE_USERNAME}"
           echo "ALPINE_DATABASE_PASSWORD=<redacted>"
+          echo "DTRACK_SECRET_KEY_EXISTING_SECRET_NAME=${DTRACK_SECRET_KEY_EXISTING_SECRET_NAME}"
+
+      - name: Validate required variables
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          : "${DEPLOY_CLIENT_ID:?DEPLOY_CLIENT_ID empty}"
+          : "${DEPLOY_SECRET:?DEPLOY_SECRET empty}"
+          : "${AZURE_TENANT_ID:?AZURE_TENANT_ID empty}"
+          : "${AZURE_SUBSCRIPTION_ID:?AZURE_SUBSCRIPTION_ID empty}"
+          : "${AKS_RESOURCE_GROUP:?AKS_RESOURCE_GROUP empty}"
+          : "${AKS_CLUSTER_NAME:?AKS_CLUSTER_NAME empty}"
+
+          : "${REGISTRY_SERVER:?REGISTRY_SERVER empty}"
+          : "${REGISTRY_USERNAME:?REGISTRY_USERNAME empty}"
+          : "${REGISTRY_PASSWORD:?REGISTRY_PASSWORD empty}"
+          : "${IMAGE_PULL_SECRET_NAME:?IMAGE_PULL_SECRET_NAME empty}"
+
+          : "${INGRESS_TLS_SECRET_NAME:?INGRESS_TLS_SECRET_NAME empty}"
+          : "${WILDCARD_CRT:?WILDCARD_CRT empty}"
+          : "${WILDCARD_KEY:?WILDCARD_KEY empty}"
+
+          : "${ALPINE_DATABASE_MODE:?ALPINE_DATABASE_MODE empty}"
+          : "${ALPINE_DATABASE_URL:?ALPINE_DATABASE_URL empty}"
+          : "${ALPINE_DATABASE_USERNAME:?ALPINE_DATABASE_USERNAME empty}"
+          : "${ALPINE_DATABASE_PASSWORD:?ALPINE_DATABASE_PASSWORD empty}"
+
+          if [[ "${ALPINE_DATABASE_URL}" != jdbc:postgresql://* ]]; then
+            echo "ERROR: ALPINE_DATABASE_URL must be a JDBC URL starting with 'jdbc:postgresql://'." >&2
+            echo "Example: jdbc:postgresql://psql.example.com:5432/dtrack?sslmode=require" >&2
+            exit 1
+          fi
+
+          : "${DTRACK_SECRET_KEY_EXISTING_SECRET_NAME:?DTRACK_SECRET_KEY_EXISTING_SECRET_NAME empty}"
+          : "${DTRACK_SECRET_KEY:?DTRACK_SECRET_KEY empty (must be a GitHub Environment Secret mastered from Key Vault)}"
+
+          # Validate DTRACK_SECRET_KEY is base64 and decodes to >= 32 bytes.
+          key_b64="$(echo -n "${DTRACK_SECRET_KEY}" | tr -d '\r\n ' )"
+          if ! echo -n "${key_b64}" | base64 -d >/dev/null 2>&1; then
+            echo "ERROR: DTRACK_SECRET_KEY is not valid base64." >&2
+            exit 1
+          fi
+          key_len="$(echo -n "${key_b64}" | base64 -d 2>/dev/null | wc -c | tr -d ' ')"
+          if [[ "${key_len}" -lt 32 ]]; then
+            echo "ERROR: DTRACK_SECRET_KEY decodes to ${key_len} bytes; expected at least 32 bytes." >&2
+            exit 1
+          fi
+
+          # Normalise Helm timeout
+          if [[ "${HELM_TIMEOUT}" =~ ^[0-9]+$ ]]; then
+            HELM_TIMEOUT="${HELM_TIMEOUT}m"
+          fi
+          if [[ ! "${HELM_TIMEOUT}" =~ ^[0-9]+[smh]$ ]]; then
+            echo "ERROR: HELM_TIMEOUT must be like '10m', '600s', '5h' (or a number of minutes like '10'). Got: '${HELM_TIMEOUT}'" >&2
+            exit 1
+          fi
+          echo "HELM_TIMEOUT=${HELM_TIMEOUT}" >> "${GITHUB_ENV}"
 
       - name: Azure login (Service Principal + secret)
         shell: bash
         run: |
           set -euo pipefail
-          : "${DEPLOY_CLIENT_ID:?DEPLOY_CLIENT_ID empty}"
-          : "${DEPLOY_SECRET:?DEPLOY_SECRET empty}"
-          : "${AZURE_TENANT_ID:?AZURE_TENANT_ID empty}"
-          : "${AZURE_SUBSCRIPTION_ID:?AZURE_SUBSCRIPTION_ID empty}"
 
-          # Force non-interactive Azure CLI behaviour by isolating config and clearing any stale context.
-          # This ensures deterministic behaviour on long-lived self-hosted runners.
           rm -rf "${AZURE_CONFIG_DIR}" 2>/dev/null || true
           mkdir -p "${AZURE_CONFIG_DIR}"
           az logout --output=none 2>/dev/null || true
@@ -206,69 +238,6 @@ jobs:
             --output=none
 
           az account set --subscription="${AZURE_SUBSCRIPTION_ID}"
-
-      - name: Validate required variables and normalise Helm timeout
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          : "${AKS_RESOURCE_GROUP:?AKS_RESOURCE_GROUP empty}"
-          : "${AKS_CLUSTER_NAME:?AKS_CLUSTER_NAME empty}"
-          : "${DTRACK_CHART_VERSION:?DTRACK_CHART_VERSION empty}"
-          : "${HELM_TIMEOUT:?HELM_TIMEOUT empty}"
-
-          : "${REGISTRY_SERVER:?REGISTRY_SERVER empty}"
-          : "${REGISTRY_USERNAME:?REGISTRY_USERNAME empty}"
-          : "${REGISTRY_PASSWORD:?REGISTRY_PASSWORD empty}"
-          : "${IMAGE_PULL_SECRET_NAME:?IMAGE_PULL_SECRET_NAME empty}"
-
-          : "${INGRESS_TLS_SECRET_NAME:?INGRESS_TLS_SECRET_NAME empty}"
-          : "${WILDCARD_CRT:?WILDCARD_CRT empty}"
-          : "${WILDCARD_KEY:?WILDCARD_KEY empty}"
-
-          # Database config (external Postgres)
-          # Prefer ALPINE_DATABASE_* directly. DTRACK_DB_URL is legacy fallback.
-          if [[ -z "${ALPINE_DATABASE_URL:-}" && -z "${DTRACK_DB_URL:-}" ]]; then
-            echo "ERROR: Database URL is missing. Set ALPINE_DATABASE_URL (preferred) or DTRACK_DB_URL (legacy)." >&2
-            exit 1
-          fi
-          : "${ALPINE_DATABASE_USERNAME:?ALPINE_DATABASE_USERNAME empty}"
-          : "${ALPINE_DATABASE_PASSWORD:?ALPINE_DATABASE_PASSWORD empty}"
-
-          # Validate DTRACK_SECRET_KEY (if provided)
-          if [[ -n "${DTRACK_SECRET_KEY:-}" ]]; then
-            python3 - <<'PY'
-          import base64, os, sys
-          s = os.environ.get('DTRACK_SECRET_KEY', '')
-          try:
-            raw = base64.b64decode(s, validate=True)
-          except Exception as e:
-            print(f"ERROR: DTRACK_SECRET_KEY is not valid base64: {e}", file=sys.stderr)
-            sys.exit(1)
-          if len(raw) < 32:
-            print(f"ERROR: DTRACK_SECRET_KEY decodes to {len(raw)} bytes; expected at least 32 bytes", file=sys.stderr)
-            sys.exit(1)
-          if len(raw) != 32:
-            print(f"WARNING: DTRACK_SECRET_KEY decodes to {len(raw)} bytes (not 32); continuing", file=sys.stderr)
-          PY
-          fi
-
-          if [[ -z "${ALPINE_DATABASE_MODE:-}" ]]; then
-            echo "ALPINE_DATABASE_MODE=external" >> "${GITHUB_ENV}"
-          fi
-
-
-          # Normalise Helm timeout:
-          # - If value is purely numeric (e.g. "10"), treat as minutes ("10m")
-          # - If it already has a unit suffix (s/m/h), keep as-is
-          if [[ "${HELM_TIMEOUT}" =~ ^[0-9]+$ ]]; then
-            HELM_TIMEOUT="${HELM_TIMEOUT}m"
-          fi
-          if [[ ! "${HELM_TIMEOUT}" =~ ^[0-9]+[smh]$ ]]; then
-            echo "ERROR: HELM_TIMEOUT must be like '10m', '600s', '5h' (or a number of minutes like '10'). Got: '${HELM_TIMEOUT}'" >&2
-            exit 1
-          fi
-          echo "HELM_TIMEOUT=${HELM_TIMEOUT}" >> "${GITHUB_ENV}"
 
       - name: Get AKS credentials (Entra) + kubelogin convert
         shell: bash
@@ -305,117 +274,13 @@ jobs:
             exit 1
           fi
 
-      # ----------------------------------------------------------------------
-      # Dependency-Track deployment
-      # ----------------------------------------------------------------------
-
       - name: Ensure namespace
         shell: bash
         run: |
           set -euo pipefail
           kubectl get namespace "${DTRACK_NAMESPACE}" >/dev/null 2>&1 || kubectl create namespace "${DTRACK_NAMESPACE}"
 
-      - name: Ensure Dependency-Track secret key secret (stable crypto key)
-        shell: bash
-        run: |
-          set -euo pipefail
-          umask 077
-
-          CREATE_RAW="${DTRACK_SECRET_KEY_CREATE:-true}"
-          CREATE="$(echo "${CREATE_RAW}" | tr '[:upper:]' '[:lower:]')"
-          EXISTING="${DTRACK_SECRET_KEY_EXISTING_SECRET_NAME:-}"
-
-          if [[ "${CREATE}" != "true" && "${CREATE}" != "false" ]]; then
-            echo "ERROR: DTRACK_SECRET_KEY_CREATE must be 'true' or 'false'. Got: '${CREATE_RAW}'" >&2
-            exit 1
-          fi
-
-          # If base64 key material is provided (recommended), we will:
-          # - ensure an existing secret name (default if empty)
-          # - create the K8s secret if missing
-          # - refuse to rotate if it exists but differs
-          # - force the chart to use existingSecretName and not auto-generate
-          if [[ -n "${DTRACK_SECRET_KEY:-}" ]]; then
-            if [[ -z "${EXISTING}" ]]; then
-              EXISTING="dtrack-secret-key"
-            fi
-
-            echo "DTRACK_SECRET_KEY_CREATE=false" >> "${GITHUB_ENV}"
-            echo "DTRACK_SECRET_KEY_EXISTING_SECRET_NAME=${EXISTING}" >> "${GITHUB_ENV}"
-
-            if kubectl --namespace="${DTRACK_NAMESPACE}" get secret "${EXISTING}" >/dev/null 2>&1; then
-              existing_val="$(kubectl --namespace="${DTRACK_NAMESPACE}" get secret "${EXISTING}" -o jsonpath='{.data.secret\.key}' 2>/dev/null || true)"
-              if [[ -z "${existing_val}" ]]; then
-                existing_val="$(kubectl --namespace="${DTRACK_NAMESPACE}" get secret "${EXISTING}" -o jsonpath='{.data.secretKey}' 2>/dev/null || true)"
-              fi
-
-              if [[ -z "${existing_val}" ]]; then
-                echo "ERROR: Secret '${EXISTING}' exists but does not contain data key 'secret.key' or 'secretKey'." >&2
-                exit 1
-              fi
-
-              if [[ "${existing_val}" != "${DTRACK_SECRET_KEY}" ]]; then
-                echo "ERROR: Secret '${EXISTING}' exists but does not match DTRACK_SECRET_KEY. Refusing to rotate." >&2
-                echo "Action: export the current cluster value and set it into Key Vault so it matches before re-running." >&2
-                echo "Example: kubectl -n ${DTRACK_NAMESPACE} get secret ${EXISTING} -o jsonpath='{.data.secret\.key}'" >&2
-                exit 1
-              fi
-
-              echo "Secret key secret exists and matches: ${EXISTING}"
-              exit 0
-            fi
-
-            echo "Secret key secret missing; creating from DTRACK_SECRET_KEY: ${EXISTING}"
-            cat <<EOF | kubectl apply --filename=-
-          apiVersion: v1
-          kind: Secret
-          metadata:
-            name: ${EXISTING}
-            namespace: ${DTRACK_NAMESPACE}
-          type: Opaque
-          data:
-            secret.key: ${DTRACK_SECRET_KEY}
-            secretKey: ${DTRACK_SECRET_KEY}
-          EOF
-            echo "Created secret key secret: ${EXISTING}"
-            exit 0
-          fi
-
-          # No DTRACK_SECRET_KEY provided. Fall back to legacy behavior:
-          # - if an existing secret name is provided, create it once (random) if missing
-          # - otherwise, allow the chart to create/manage the secret key if DTRACK_SECRET_KEY_CREATE=true
-          if [[ -n "${EXISTING}" ]]; then
-            echo "DTRACK_SECRET_KEY_CREATE=false" >> "${GITHUB_ENV}"
-
-            if kubectl --namespace="${DTRACK_NAMESPACE}" get secret "${EXISTING}" >/dev/null 2>&1; then
-              echo "Secret key secret exists: ${EXISTING}"
-              exit 0
-            fi
-
-            echo "Secret key secret missing; creating (random): ${EXISTING}"
-
-            KEY_FILE="${RUNNER_TEMP}/dtrack.secret.key"
-            openssl rand 32 > "${KEY_FILE}"
-            chmod 600 "${KEY_FILE}"
-
-            kubectl --namespace="${DTRACK_NAMESPACE}" create secret generic "${EXISTING}" \
-              --from-file=secret.key="${KEY_FILE}" \
-              --from-file=secretKey="${KEY_FILE}"
-
-            echo "Created secret key secret: ${EXISTING}"
-            exit 0
-          fi
-
-          # No existing secret specified.
-          echo "DTRACK_SECRET_KEY_CREATE=${CREATE}" >> "${GITHUB_ENV}"
-          if [[ "${CREATE}" == "false" ]]; then
-            echo "ERROR: DTRACK_SECRET_KEY_CREATE=false but DTRACK_SECRET_KEY_EXISTING_SECRET_NAME is empty." >&2
-            echo "Set DTRACK_SECRET_KEY_EXISTING_SECRET_NAME to an existing secret name, or set DTRACK_SECRET_KEY_CREATE=true." >&2
-            exit 1
-          fi
-
-
-      - name: Create/update imagePullSecret (registry) in dependency-track namespace
+      - name: Ensure imagePullSecret (registry) in dependency-track namespace
         shell: bash
         run: |
           set -euo pipefail
@@ -434,35 +299,13 @@ jobs:
           set -euo pipefail
           umask 077
 
-          CERT_FILE="/tmp/wildcard.crt"
-          KEY_FILE="/tmp/wildcard.key"
-          export CERT_FILE KEY_FILE
+          CERT_FILE="${RUNNER_TEMP}/wildcard.crt"
+          KEY_FILE="${RUNNER_TEMP}/wildcard.key"
 
-          # Write PEM material to temp files without printing to logs.
-          # Note: we normalise CRLF -> LF to avoid PEM parsing issues.
-          python3 - <<'PY'
-          import os
-          from pathlib import Path
-
-          crt = os.environ.get('WILDCARD_CRT','').replace('\r\n', '\n').replace('\r', '')
-          key = os.environ.get('WILDCARD_KEY','').replace('\r\n', '\n').replace('\r', '')
-
-          Path(os.environ['CERT_FILE']).write_text(crt, encoding='utf-8')
-          Path(os.environ['KEY_FILE']).write_text(key, encoding='utf-8')
-          PY
-
+          printf '%s' "${WILDCARD_CRT}" | tr -d '\r' > "${CERT_FILE}"
+          printf '%s' "${WILDCARD_KEY}" | tr -d '\r' > "${KEY_FILE}"
           chmod 600 "${CERT_FILE}" "${KEY_FILE}"
 
-          if [[ ! -s "${CERT_FILE}" ]]; then
-            echo "ERROR: Certificate file is empty after writing secrets. Check WILDCARD_CRT." >&2
-            exit 1
-          fi
-          if [[ ! -s "${KEY_FILE}" ]]; then
-            echo "ERROR: Key file is empty after writing secrets. Check WILDCARD_KEY." >&2
-            exit 1
-          fi
-
-          # Patterns start with dashes; use `--` to prevent grep treating them as options.
           if ! grep -F -q -- "-----BEGIN CERTIFICATE-----" "${CERT_FILE}"; then
             echo "ERROR: WILDCARD_CRT does not look like PEM. Expected '-----BEGIN CERTIFICATE-----' header." >&2
             exit 1
@@ -478,6 +321,64 @@ jobs:
             --dry-run=client --output=yaml \
             | kubectl apply --filename=-
 
+      - name: Ensure secret key secret (mastered in Key Vault; enforce no drift)
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+
+          SECRET_NAME="${DTRACK_SECRET_KEY_EXISTING_SECRET_NAME}"
+          desired_b64="$(echo -n "${DTRACK_SECRET_KEY}" | tr -d '\r\n ' )"
+
+          # Decode to a file so we can create the secret without ever embedding the base64 string in manifests.
+          KEY_FILE="${RUNNER_TEMP}/dtrack.secret.key"
+          echo -n "${desired_b64}" | base64 -d > "${KEY_FILE}"
+          chmod 600 "${KEY_FILE}"
+
+          # If secret exists, compare to mastered value (refuse rotation).
+          if kubectl --namespace="${DTRACK_NAMESPACE}" get secret "${SECRET_NAME}" >/dev/null 2>&1; then
+            existing_b64="$(kubectl --namespace="${DTRACK_NAMESPACE}" get secret "${SECRET_NAME}" -o jsonpath='{.data.secret\.key}' 2>/dev/null || true)"
+            if [[ -z "${existing_b64}" ]]; then
+              existing_b64="$(kubectl --namespace="${DTRACK_NAMESPACE}" get secret "${SECRET_NAME}" -o jsonpath='{.data.secretKey}' 2>/dev/null || true)"
+            fi
+
+            if [[ -z "${existing_b64}" ]]; then
+              echo "ERROR: Secret '${SECRET_NAME}' exists but does not contain data key 'secret.key' or 'secretKey'." >&2
+              echo "Remediation: recreate the secret with key 'secret.key' (file name) and re-run." >&2
+              exit 1
+            fi
+
+            if [[ "${existing_b64}" != "${desired_b64}" ]]; then
+              echo "ERROR: Secret-key drift detected for '${DTRACK_NAMESPACE}/${SECRET_NAME}'." >&2
+              echo "The cluster secret key does not match the mastered value (Key Vault -> GHES secret DTRACK_SECRET_KEY)." >&2
+              echo "This repo refuses to rotate the key automatically because it can invalidate encrypted data/tokens." >&2
+              echo "" >&2
+              echo "Remediation options:" >&2
+              echo "A) Align mastering to runtime (recommended):" >&2
+              echo "   1) Export the current cluster value (base64):" >&2
+              echo "      kubectl -n ${DTRACK_NAMESPACE} get secret ${SECRET_NAME} -o jsonpath='{.data.secret\\.key}'" >&2
+              echo "   2) Set that exact base64 string into Key Vault so it syncs to GitHub Environment secret DTRACK_SECRET_KEY." >&2
+              echo "   3) Re-run the workflow." >&2
+              echo "" >&2
+              echo "B) Intentional rotation / forced redeploy (destructive):" >&2
+              echo "   1) Update Key Vault secret DTRACK_SECRET_KEY to the new desired value." >&2
+              echo "   2) Manually delete the in-cluster secret so the workflow can recreate it:" >&2
+              echo "      kubectl -n ${DTRACK_NAMESPACE} delete secret ${SECRET_NAME}" >&2
+              echo "   3) Re-run the workflow." >&2
+              echo "   Note: if the application has persisted encrypted material tied to the old key, rotation may break access." >&2
+              exit 1
+            fi
+
+            echo "Secret key matches mastered value: ${DTRACK_NAMESPACE}/${SECRET_NAME}"
+          else
+            echo "Secret key secret missing; creating from mastered DTRACK_SECRET_KEY: ${DTRACK_NAMESPACE}/${SECRET_NAME}"
+            kubectl --namespace="${DTRACK_NAMESPACE}" create secret generic "${SECRET_NAME}" \
+              --from-file=secret.key="${KEY_FILE}" \
+              --from-file=secretKey="${KEY_FILE}" \
+              --dry-run=client --output=yaml \
+              | kubectl apply --filename=-
+          fi
+
       - name: Create/update app config secret (dependency-track)
         shell: bash
         run: |
@@ -485,154 +386,58 @@ jobs:
           umask 077
 
           ENV_FILE="${RUNNER_TEMP}/dtrack.env"
-          export ENV_FILE
           rm -f "${ENV_FILE}" || true
           : > "${ENV_FILE}"
           chmod 600 "${ENV_FILE}"
 
           # Write env file without echoing values to logs.
-          python3 - <<'PY'
-          import os
-          from pathlib import Path
-          from urllib.parse import urlparse, parse_qsl, urlencode
+          printf 'ALPINE_DATABASE_MODE=%s\n' "${ALPINE_DATABASE_MODE}" >> "${ENV_FILE}"
+          printf 'ALPINE_DATABASE_URL=%s\n' "${ALPINE_DATABASE_URL}" >> "${ENV_FILE}"
+          printf 'ALPINE_DATABASE_USERNAME=%s\n' "${ALPINE_DATABASE_USERNAME}" >> "${ENV_FILE}"
+          printf 'ALPINE_DATABASE_PASSWORD=%s\n' "${ALPINE_DATABASE_PASSWORD}" >> "${ENV_FILE}"
 
-          env_file = Path(os.environ['ENV_FILE'])
-
-          dtrack_db_url = os.environ.get('DTRACK_DB_URL','').strip()
-          alpine_url = os.environ.get('ALPINE_DATABASE_URL','').strip()
-          alpine_mode = os.environ.get('ALPINE_DATABASE_MODE','').strip()
-          alpine_user = os.environ.get('ALPINE_DATABASE_USERNAME','').strip()
-          alpine_pass = os.environ.get('ALPINE_DATABASE_PASSWORD','').strip()
-
-          def to_jdbc(url: str) -> tuple[str, str, str]:
-            """Return (jdbc_url, user, pass).
-
-            Accepts:
-              - jdbc:postgresql://host:port/db?sslmode=require
-              - postgres://user:pass@host:port/db?sslmode=require
-              - postgresql://user:pass@host:port/db
-            """
-            if url.startswith('jdbc:postgresql:'):
-              return url, '', ''
-
-            if url.startswith('postgres://') or url.startswith('postgresql://'):
-              u = urlparse(url)
-              host = u.hostname
-              port = u.port or 5432
-              db = (u.path or '').lstrip('/')
-              if not host or not db:
-                raise SystemExit('Database URL must include host and database name.')
-
-              q = dict(parse_qsl(u.query, keep_blank_values=True))
-              if 'sslmode' not in q:
-                q['sslmode'] = 'require'
-              query = urlencode(q)
-
-              jdbc = f"jdbc:postgresql://{host}:{port}/{db}"
-              if query:
-                jdbc += f"?{query}"
-
-              user = u.username or ''
-              pw = u.password or ''
-              return jdbc, user, pw
-
-            raise SystemExit(
-              "Database URL must be a JDBC URL (jdbc:postgresql://...) or a libpq URL (postgres://... or postgresql://...)."
-            )
-
-          # Prefer explicit ALPINE_DATABASE_URL; fall back to legacy DTRACK_DB_URL.
-          source_url = alpine_url or dtrack_db_url
-          jdbc_url, parsed_user, parsed_pass = to_jdbc(source_url)
-
-          # If caller provided user/pass separately, keep them; otherwise use parsed credentials (if present).
-          if not alpine_user and parsed_user:
-            alpine_user = parsed_user
-          if not alpine_pass and parsed_pass:
-            alpine_pass = parsed_pass
-
-          data = {
-            'ALPINE_DATABASE_MODE': alpine_mode or 'external',
-            'ALPINE_DATABASE_URL': jdbc_url,
-            'ALPINE_DATABASE_USERNAME': alpine_user,
-            'ALPINE_DATABASE_PASSWORD': alpine_pass,
-          }
-
-          missing = [k for k in ('ALPINE_DATABASE_URL','ALPINE_DATABASE_USERNAME','ALPINE_DATABASE_PASSWORD') if not data.get(k)]
-          if missing:
-            raise SystemExit(f"Missing required database keys for Dependency-Track: {', '.join(missing)}")
-
-          env_file.write_text("\n".join([f"{k}={v}" for k, v in data.items()]) + "\n", encoding='utf-8')
-          PY
+          if [[ "${DEBUG}" == "true" ]]; then
+            printf 'LOGGING_LEVEL=DEBUG\n' >> "${ENV_FILE}"
+          fi
 
           kubectl --namespace="${DTRACK_NAMESPACE}" create secret generic "${DTRACK_APP_CONFIG_SECRET_NAME}" \
             --from-env-file="${ENV_FILE}" \
             --dry-run=client --output=yaml \
             | kubectl apply --filename=-
 
-      - name: Render values.generated.yaml (no secret logging)
+      - name: Render values.generated.yaml (safe to publish as debug artefact)
         shell: bash
         run: |
           set -euo pipefail
           umask 077
 
-          python3 - <<'PY'
-          import os, json
-          from pathlib import Path
+          # Generate from the template using simple placeholder replacement.
+          # Only non-sensitive values are inserted.
+          TEMPLATE="helm/dependency-track/values.template.yaml"
+          OUT="${RUNNER_TEMP}/values.generated.yaml"
 
-          create_secret_key = (os.environ.get('DTRACK_SECRET_KEY_CREATE','true') or 'true').lower()
-          existing_secret_name = os.environ.get('DTRACK_SECRET_KEY_EXISTING_SECRET_NAME','')
-          if create_secret_key == 'true':
-            # Prevent the chart from trying to mount a non-existent existing secret when createSecret is enabled.
-            existing_secret_name = ''
+          # Use perl for robust multi-replace without shell-escaping issues.
+          perl -pe 's/<REGISTRY_SERVER>/$ENV{REGISTRY_SERVER}/g;
+                    s/<IMAGE_PULL_SECRET_NAME>/$ENV{IMAGE_PULL_SECRET_NAME}/g;
+                    s/<DTRACK_SECRET_KEY_EXISTING_SECRET_NAME>/$ENV{DTRACK_SECRET_KEY_EXISTING_SECRET_NAME}/g;
+                    s/<DTRACK_APISERVER_IMAGE_REPOSITORY>/$ENV{DTRACK_APISERVER_IMAGE_REPOSITORY}/g;
+                    s/<DTRACK_APISERVER_IMAGE_TAG>/$ENV{DTRACK_APISERVER_IMAGE_TAG}/g;
+                    s/<DTRACK_FRONTEND_IMAGE_REPOSITORY>/$ENV{DTRACK_FRONTEND_IMAGE_REPOSITORY}/g;
+                    s/<DTRACK_FRONTEND_IMAGE_TAG>/$ENV{DTRACK_FRONTEND_IMAGE_TAG}/g;
+                    s/<DTRACK_FRONTEND_API_BASE_URL>/$ENV{DTRACK_FRONTEND_API_BASE_URL}/g;
+                    s/<DTRACK_INGRESS_HOST>/$ENV{DTRACK_INGRESS_HOST}/g;
+                    s/<DTRACK_INGRESS_CLASS_NAME>/$ENV{DTRACK_INGRESS_CLASS_NAME}/g;
+                    s/<INGRESS_TLS_SECRET_NAME>/$ENV{INGRESS_TLS_SECRET_NAME}/g;
+                    s/<DTRACK_APP_CONFIG_SECRET_NAME>/$ENV{DTRACK_APP_CONFIG_SECRET_NAME}/g;
+                    s/<DTRACK_APISERVER_PV_ENABLED>/$ENV{DTRACK_APISERVER_PV_ENABLED}/g;
+                    s/<DTRACK_APISERVER_PV_CLASSNAME>/$ENV{DTRACK_APISERVER_PV_CLASSNAME}/g;
+                    s/<DTRACK_APISERVER_PV_SIZE>/$ENV{DTRACK_APISERVER_PV_SIZE}/g;
+                    s/<DTRACK_INGRESS_ANNOTATIONS_JSON>/$ENV{DTRACK_INGRESS_ANNOTATIONS_JSON}/g;' "${TEMPLATE}" > "${OUT}"
 
-          repl = {
-            '<REGISTRY_SERVER>': os.environ.get('REGISTRY_SERVER',''),
-            '<IMAGE_PULL_SECRET_NAME>': os.environ.get('IMAGE_PULL_SECRET_NAME',''),
+          chmod 600 "${OUT}"
+          test -s "${OUT}"
 
-            '<DTRACK_SECRET_KEY_CREATE>': create_secret_key,
-            '<DTRACK_SECRET_KEY_EXISTING_SECRET_NAME>': existing_secret_name,
-
-            '<DTRACK_APISERVER_IMAGE_REPOSITORY>': os.environ.get('DTRACK_APISERVER_IMAGE_REPOSITORY','dependencytrack/apiserver'),
-            '<DTRACK_APISERVER_IMAGE_TAG>': os.environ.get('DTRACK_APISERVER_IMAGE_TAG',''),
-
-            '<DTRACK_FRONTEND_IMAGE_REPOSITORY>': os.environ.get('DTRACK_FRONTEND_IMAGE_REPOSITORY','dependencytrack/frontend'),
-            '<DTRACK_FRONTEND_IMAGE_TAG>': os.environ.get('DTRACK_FRONTEND_IMAGE_TAG',''),
-
-            '<DTRACK_FRONTEND_API_BASE_URL>': os.environ.get('DTRACK_FRONTEND_API_BASE_URL',''),
-
-            '<DTRACK_INGRESS_HOST>': os.environ.get('DTRACK_INGRESS_HOST','example.com'),
-            '<DTRACK_INGRESS_CLASS_NAME>': os.environ.get('DTRACK_INGRESS_CLASS_NAME',''),
-            '<INGRESS_TLS_SECRET_NAME>': os.environ.get('INGRESS_TLS_SECRET_NAME',''),
-
-            '<DTRACK_APP_CONFIG_SECRET_NAME>': os.environ.get('DTRACK_APP_CONFIG_SECRET_NAME','dependency-track-app-config'),
-
-            '<DTRACK_APISERVER_PV_ENABLED>': (os.environ.get('DTRACK_APISERVER_PV_ENABLED','false') or 'false').lower(),
-            '<DTRACK_APISERVER_PV_CLASSNAME>': os.environ.get('DTRACK_APISERVER_PV_CLASSNAME',''),
-            '<DTRACK_APISERVER_PV_SIZE>': os.environ.get('DTRACK_APISERVER_PV_SIZE','5Gi'),
-          }
-
-          ann_raw = os.environ.get('DTRACK_INGRESS_ANNOTATIONS_JSON','{}') or '{}'
-          try:
-            ann = json.loads(ann_raw)
-            if not isinstance(ann, dict):
-              raise ValueError('must be a JSON object')
-          except Exception:
-            ann = {}
-
-          text = Path('helm/dependency-track/values.template.yaml').read_text(encoding='utf-8')
-          for k, v in repl.items():
-            text = text.replace(k, str(v))
-
-          text = text.replace('<DTRACK_INGRESS_ANNOTATIONS_JSON>', json.dumps(ann, separators=(',',':')))
-
-          out = Path(os.environ['RUNNER_TEMP']) / 'values.generated.yaml'
-          out.write_text(text, encoding='utf-8')
-          out.chmod(0o600)
-          PY
-
-          test -s "${RUNNER_TEMP}/values.generated.yaml"
-
-      - name: Install/upgrade Dependency-Track (official chart; images pulled from registry)
+      - name: Install/upgrade Dependency-Track (official chart)
         shell: bash
         run: |
           set -euo pipefail
@@ -640,48 +445,187 @@ jobs:
           helm repo add dependency-track "${DTRACK_HELM_REPO_URL}"
           helm repo update
 
+          EXTRA_HELM_FLAGS=""
+          if [[ "${DEBUG}" == "true" ]]; then
+            EXTRA_HELM_FLAGS="--debug"
+          fi
+
           helm upgrade --install "${DTRACK_RELEASE_NAME}" dependency-track/dependency-track \
             --namespace="${DTRACK_NAMESPACE}" \
             --version="${DTRACK_CHART_VERSION}" \
             --values="${RUNNER_TEMP}/values.generated.yaml" \
-            --wait --atomic --timeout="${HELM_TIMEOUT}"
+            --wait --atomic --timeout="${HELM_TIMEOUT}" \
+            ${EXTRA_HELM_FLAGS}
 
           kubectl --namespace="${DTRACK_NAMESPACE}" get pods --output=wide
           kubectl --namespace="${DTRACK_NAMESPACE}" get svc --output=wide
-
-
-      - name: Force apiserver restart (debug enabled)
-        if: ${{ inputs.dtrack_debug == true }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          kubectl --namespace="${DTRACK_NAMESPACE}" rollout restart deploy -l app.kubernetes.io/name=dependency-track-apiserver || true
-          kubectl --namespace="${DTRACK_NAMESPACE}" rollout status deploy -l app.kubernetes.io/name=dependency-track-apiserver --timeout=5m || true
-
-      - name: Diagnostics (debug enabled)
-        if: ${{ inputs.dtrack_debug == true }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo \"== Pods ==\"
-          kubectl --namespace=\"${DTRACK_NAMESPACE}\" get pods -o wide || true
-          echo \"== Describe apiserver pod(s) ==\"
-          kubectl --namespace=\"${DTRACK_NAMESPACE}\" describe pod -l app.kubernetes.io/name=dependency-track-apiserver || true
-          echo \"== Logs (apiserver) ==\"
-          kubectl --namespace=\"${DTRACK_NAMESPACE}\" logs -l app.kubernetes.io/name=dependency-track-apiserver --all-containers=true --tail=300 || true
-          echo \"== Previous logs (apiserver) ==\"
-          kubectl --namespace=\"${DTRACK_NAMESPACE}\" logs -l app.kubernetes.io/name=dependency-track-apiserver --all-containers=true --tail=300 --previous || true
 
       - name: Post-deploy checks
         shell: bash
         run: |
           set -euo pipefail
-
           kubectl --namespace="${DTRACK_NAMESPACE}" get ingress -o wide || true
           kubectl --namespace="${DTRACK_NAMESPACE}" get svc -o wide
-
           kubectl --namespace="${DTRACK_NAMESPACE}" wait --for=condition=Ready pod \
-            -l app.kubernetes.io/name=dependency-track-apiserver \
+            -l app.kubernetes.io/component=api-server \
             --timeout=5m || true
-
           echo "Done."
+
+  debug-artifacts:
+    needs: [deploy]
+    if: ${{ always() && inputs.debug }}
+    runs-on: self-hosted
+    environment: ${{ inputs.environment }}
+    timeout-minutes: 30
+
+    env:
+      AZURE_CONFIG_DIR: ${{ runner.temp }}/.azure
+      KUBECONFIG: ${{ runner.temp }}/kubeconfig
+
+      HELM_TIMEOUT: ${{ inputs.helm_timeout }}
+
+      USE_ADMIN_CREDENTIALS: ${{ inputs.use_admin_credentials }}
+
+      # Minimal set of vars (same resolution contract)
+      DEPLOY_CLIENT_ID: ${{ vars.DEPLOY_CLIENT_ID != '' && vars.DEPLOY_CLIENT_ID || secrets.DEPLOY_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID != '' && vars.AZURE_TENANT_ID || secrets.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID != '' && vars.AZURE_SUBSCRIPTION_ID || secrets.AZURE_SUBSCRIPTION_ID }}
+      DEPLOY_SECRET: ${{ vars.DEPLOY_SECRET != '' && vars.DEPLOY_SECRET || secrets.DEPLOY_SECRET }}
+      AKS_RESOURCE_GROUP: ${{ vars.AKS_RESOURCE_GROUP != '' && vars.AKS_RESOURCE_GROUP || secrets.AKS_RESOURCE_GROUP }}
+      AKS_CLUSTER_NAME: ${{ vars.AKS_CLUSTER_NAME != '' && vars.AKS_CLUSTER_NAME || secrets.AKS_CLUSTER_NAME }}
+
+      REGISTRY_SERVER: ${{ vars.REGISTRY_SERVER != '' && vars.REGISTRY_SERVER || secrets.REGISTRY_SERVER }}
+      IMAGE_PULL_SECRET_NAME: ${{ (vars.IMAGE_PULL_SECRET_NAME != '' && vars.IMAGE_PULL_SECRET_NAME) || (secrets.IMAGE_PULL_SECRET_NAME != '' && secrets.IMAGE_PULL_SECRET_NAME) || 'nexus-pull' }}
+
+      DTRACK_NAMESPACE: ${{ (vars.DTRACK_NAMESPACE != '' && vars.DTRACK_NAMESPACE) || (secrets.DTRACK_NAMESPACE != '' && secrets.DTRACK_NAMESPACE) || 'dependency-track' }}
+      DTRACK_RELEASE_NAME: ${{ (vars.DTRACK_RELEASE_NAME != '' && vars.DTRACK_RELEASE_NAME) || (secrets.DTRACK_RELEASE_NAME != '' && secrets.DTRACK_RELEASE_NAME) || 'dependency-track' }}
+      DTRACK_HELM_REPO_URL: ${{ (vars.DTRACK_HELM_REPO_URL != '' && vars.DTRACK_HELM_REPO_URL) || (secrets.DTRACK_HELM_REPO_URL != '' && secrets.DTRACK_HELM_REPO_URL) || 'https://dependencytrack.github.io/helm-charts' }}
+      DTRACK_CHART_VERSION: ${{ (vars.DTRACK_CHART_VERSION != '' && vars.DTRACK_CHART_VERSION) || (secrets.DTRACK_CHART_VERSION != '' && secrets.DTRACK_CHART_VERSION) || '0.41.0' }}
+
+      DTRACK_INGRESS_HOST: ${{ (vars.DTRACK_INGRESS_HOST != '' && vars.DTRACK_INGRESS_HOST) || (secrets.DTRACK_INGRESS_HOST != '' && secrets.DTRACK_INGRESS_HOST) || 'dtrack.logiki.co.uk' }}
+      DTRACK_INGRESS_CLASS_NAME: ${{ (vars.DTRACK_INGRESS_CLASS_NAME != '' && vars.DTRACK_INGRESS_CLASS_NAME) || (secrets.DTRACK_INGRESS_CLASS_NAME != '' && secrets.DTRACK_INGRESS_CLASS_NAME) || 'traefik' }}
+      INGRESS_TLS_SECRET_NAME: ${{ (vars.INGRESS_TLS_SECRET_NAME != '' && vars.INGRESS_TLS_SECRET_NAME) || (secrets.INGRESS_TLS_SECRET_NAME != '' && secrets.INGRESS_TLS_SECRET_NAME) || 'dtrack-wildcard-tls' }}
+
+      DTRACK_APP_CONFIG_SECRET_NAME: ${{ (vars.DTRACK_APP_CONFIG_SECRET_NAME != '' && vars.DTRACK_APP_CONFIG_SECRET_NAME) || (secrets.DTRACK_APP_CONFIG_SECRET_NAME != '' && secrets.DTRACK_APP_CONFIG_SECRET_NAME) || 'dependency-track-app-config' }}
+      DTRACK_SECRET_KEY_EXISTING_SECRET_NAME: ${{ (vars.DTRACK_SECRET_KEY_EXISTING_SECRET_NAME != '' && vars.DTRACK_SECRET_KEY_EXISTING_SECRET_NAME) || (secrets.DTRACK_SECRET_KEY_EXISTING_SECRET_NAME != '' && secrets.DTRACK_SECRET_KEY_EXISTING_SECRET_NAME) || 'dtrack-secret-key' }}
+
+      DTRACK_APISERVER_IMAGE_REPOSITORY: ${{ (vars.DTRACK_APISERVER_IMAGE_REPOSITORY != '' && vars.DTRACK_APISERVER_IMAGE_REPOSITORY) || (secrets.DTRACK_APISERVER_IMAGE_REPOSITORY != '' && secrets.DTRACK_APISERVER_IMAGE_REPOSITORY) || 'dependencytrack/apiserver' }}
+      DTRACK_FRONTEND_IMAGE_REPOSITORY: ${{ (vars.DTRACK_FRONTEND_IMAGE_REPOSITORY != '' && vars.DTRACK_FRONTEND_IMAGE_REPOSITORY) || (secrets.DTRACK_FRONTEND_IMAGE_REPOSITORY != '' && secrets.DTRACK_FRONTEND_IMAGE_REPOSITORY) || 'dependencytrack/frontend' }}
+      DTRACK_APISERVER_IMAGE_TAG: ${{ (vars.DTRACK_APISERVER_IMAGE_TAG != '' && vars.DTRACK_APISERVER_IMAGE_TAG) || (secrets.DTRACK_APISERVER_IMAGE_TAG != '' && secrets.DTRACK_APISERVER_IMAGE_TAG) || '' }}
+      DTRACK_FRONTEND_IMAGE_TAG: ${{ (vars.DTRACK_FRONTEND_IMAGE_TAG != '' && vars.DTRACK_FRONTEND_IMAGE_TAG) || (secrets.DTRACK_FRONTEND_IMAGE_TAG != '' && secrets.DTRACK_FRONTEND_IMAGE_TAG) || '' }}
+      DTRACK_FRONTEND_API_BASE_URL: ${{ (vars.DTRACK_FRONTEND_API_BASE_URL != '' && vars.DTRACK_FRONTEND_API_BASE_URL) || (secrets.DTRACK_FRONTEND_API_BASE_URL != '' && secrets.DTRACK_FRONTEND_API_BASE_URL) || '' }}
+      DTRACK_INGRESS_ANNOTATIONS_JSON: ${{ (vars.DTRACK_INGRESS_ANNOTATIONS_JSON != '' && vars.DTRACK_INGRESS_ANNOTATIONS_JSON) || (secrets.DTRACK_INGRESS_ANNOTATIONS_JSON != '' && secrets.DTRACK_INGRESS_ANNOTATIONS_JSON) || '{}' }}
+
+      DTRACK_APISERVER_PV_ENABLED: ${{ (vars.DTRACK_APISERVER_PV_ENABLED != '' && vars.DTRACK_APISERVER_PV_ENABLED) || (secrets.DTRACK_APISERVER_PV_ENABLED != '' && secrets.DTRACK_APISERVER_PV_ENABLED) || 'false' }}
+      DTRACK_APISERVER_PV_CLASSNAME: ${{ (vars.DTRACK_APISERVER_PV_CLASSNAME != '' && vars.DTRACK_APISERVER_PV_CLASSNAME) || (secrets.DTRACK_APISERVER_PV_CLASSNAME != '' && secrets.DTRACK_APISERVER_PV_CLASSNAME) || '' }}
+      DTRACK_APISERVER_PV_SIZE: ${{ (vars.DTRACK_APISERVER_PV_SIZE != '' && vars.DTRACK_APISERVER_PV_SIZE) || (secrets.DTRACK_APISERVER_PV_SIZE != '' && secrets.DTRACK_APISERVER_PV_SIZE) || '5Gi' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure login (Service Principal + secret)
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf "${AZURE_CONFIG_DIR}" 2>/dev/null || true
+          mkdir -p "${AZURE_CONFIG_DIR}"
+          az logout --output=none 2>/dev/null || true
+          az account clear --output=none 2>/dev/null || true
+
+          az login \
+            --service-principal \
+            --username="${DEPLOY_CLIENT_ID}" \
+            --password="${DEPLOY_SECRET}" \
+            --tenant="${AZURE_TENANT_ID}" \
+            --output=none
+
+          az account set --subscription="${AZURE_SUBSCRIPTION_ID}"
+
+      - name: Get AKS credentials (Entra) + kubelogin convert
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+
+          ADMIN_FLAG=""
+          if [[ "${USE_ADMIN_CREDENTIALS}" == "true" ]]; then
+            ADMIN_FLAG="--admin"
+          fi
+
+          az aks get-credentials \
+            --resource-group="${AKS_RESOURCE_GROUP}" \
+            --name="${AKS_CLUSTER_NAME}" \
+            --file="${KUBECONFIG}" \
+            ${ADMIN_FLAG} \
+            --overwrite-existing
+
+          kubelogin convert-kubeconfig \
+            --login="spn" \
+            --client-id="${DEPLOY_CLIENT_ID}" \
+            --client-secret="${DEPLOY_SECRET}" \
+            --tenant-id="${AZURE_TENANT_ID}" \
+            --kubeconfig="${KUBECONFIG}"
+
+      - name: Render values.generated.yaml (debug artefact)
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+
+          TEMPLATE="helm/dependency-track/values.template.yaml"
+          OUT="${RUNNER_TEMP}/values.generated.yaml"
+
+          perl -pe 's/<REGISTRY_SERVER>/$ENV{REGISTRY_SERVER}/g;
+                    s/<IMAGE_PULL_SECRET_NAME>/$ENV{IMAGE_PULL_SECRET_NAME}/g;
+                    s/<DTRACK_SECRET_KEY_EXISTING_SECRET_NAME>/$ENV{DTRACK_SECRET_KEY_EXISTING_SECRET_NAME}/g;
+                    s/<DTRACK_APISERVER_IMAGE_REPOSITORY>/$ENV{DTRACK_APISERVER_IMAGE_REPOSITORY}/g;
+                    s/<DTRACK_APISERVER_IMAGE_TAG>/$ENV{DTRACK_APISERVER_IMAGE_TAG}/g;
+                    s/<DTRACK_FRONTEND_IMAGE_REPOSITORY>/$ENV{DTRACK_FRONTEND_IMAGE_REPOSITORY}/g;
+                    s/<DTRACK_FRONTEND_IMAGE_TAG>/$ENV{DTRACK_FRONTEND_IMAGE_TAG}/g;
+                    s/<DTRACK_FRONTEND_API_BASE_URL>/$ENV{DTRACK_FRONTEND_API_BASE_URL}/g;
+                    s/<DTRACK_INGRESS_HOST>/$ENV{DTRACK_INGRESS_HOST}/g;
+                    s/<DTRACK_INGRESS_CLASS_NAME>/$ENV{DTRACK_INGRESS_CLASS_NAME}/g;
+                    s/<INGRESS_TLS_SECRET_NAME>/$ENV{INGRESS_TLS_SECRET_NAME}/g;
+                    s/<DTRACK_APP_CONFIG_SECRET_NAME>/$ENV{DTRACK_APP_CONFIG_SECRET_NAME}/g;
+                    s/<DTRACK_APISERVER_PV_ENABLED>/$ENV{DTRACK_APISERVER_PV_ENABLED}/g;
+                    s/<DTRACK_APISERVER_PV_CLASSNAME>/$ENV{DTRACK_APISERVER_PV_CLASSNAME}/g;
+                    s/<DTRACK_APISERVER_PV_SIZE>/$ENV{DTRACK_APISERVER_PV_SIZE}/g;
+                    s/<DTRACK_INGRESS_ANNOTATIONS_JSON>/$ENV{DTRACK_INGRESS_ANNOTATIONS_JSON}/g;' "${TEMPLATE}" > "${OUT}"
+
+          chmod 600 "${OUT}"
+
+      - name: Collect diagnostics (best effort)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/debug"
+
+          cp -f "${RUNNER_TEMP}/values.generated.yaml" "${RUNNER_TEMP}/debug/values.generated.yaml"
+
+          {
+            echo "== Helm status ==";
+            helm -n "${DTRACK_NAMESPACE}" status "${DTRACK_RELEASE_NAME}" || true;
+            echo;
+            echo "== Helm values ==";
+            helm -n "${DTRACK_NAMESPACE}" get values "${DTRACK_RELEASE_NAME}" || true;
+          } > "${RUNNER_TEMP}/debug/helm.txt" 2>&1
+
+          kubectl -n "${DTRACK_NAMESPACE}" get pods -o wide > "${RUNNER_TEMP}/debug/pods.txt" 2>&1 || true
+          kubectl -n "${DTRACK_NAMESPACE}" get svc -o wide > "${RUNNER_TEMP}/debug/svc.txt" 2>&1 || true
+          kubectl -n "${DTRACK_NAMESPACE}" get ingress -o wide > "${RUNNER_TEMP}/debug/ingress.txt" 2>&1 || true
+          kubectl -n "${DTRACK_NAMESPACE}" get statefulset -o wide > "${RUNNER_TEMP}/debug/statefulset.txt" 2>&1 || true
+          kubectl -n "${DTRACK_NAMESPACE}" get deploy -o wide > "${RUNNER_TEMP}/debug/deploy.txt" 2>&1 || true
+
+          kubectl -n "${DTRACK_NAMESPACE}" get events --sort-by=.lastTimestamp > "${RUNNER_TEMP}/debug/events.txt" 2>&1 || true
+
+          kubectl -n "${DTRACK_NAMESPACE}" describe pod -l app.kubernetes.io/component=api-server > "${RUNNER_TEMP}/debug/describe-api-server.txt" 2>&1 || true
+          kubectl -n "${DTRACK_NAMESPACE}" logs -l app.kubernetes.io/component=api-server --all-containers=true --tail=300 > "${RUNNER_TEMP}/debug/logs-api-server.txt" 2>&1 || true
+          kubectl -n "${DTRACK_NAMESPACE}" logs -l app.kubernetes.io/component=api-server --all-containers=true --tail=300 --previous > "${RUNNER_TEMP}/debug/logs-api-server-previous.txt" 2>&1 || true
+
+      - name: Upload debug artefacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-track-debug-${{ inputs.environment }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/debug
+          if-no-files-found: warn
