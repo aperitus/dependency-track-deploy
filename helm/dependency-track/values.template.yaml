@@ -1,5 +1,5 @@
 # Rendered by the workflow into values.generated.yaml
-# This file is a reference template; the workflow generates the final values file.
+# Placeholders are replaced using a non-echoing Python step.
 
 common:
   image:
@@ -7,10 +7,13 @@ common:
     pullSecrets:
       - name: "<IMAGE_PULL_SECRET_NAME>"
 
-  # In this repository, the Dependency-Track secret key is *mastered externally* (Key Vault -> GHES secret)
-  # and enforced as a stable existing Kubernetes Secret.
+  # Prefer a stable secret key in production.
+  # Set either:
+  #   - createSecret: true
+  # OR
+  #   - existingSecretName: <some-secret>
   secretKey:
-    createSecret: false
+    createSecret: <DTRACK_SECRET_KEY_CREATE>
     existingSecretName: "<DTRACK_SECRET_KEY_EXISTING_SECRET_NAME>"
 
 apiServer:
