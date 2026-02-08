@@ -2,7 +2,7 @@
 
 **Document purpose:** This document is the single authoritative reference for how the `dependency-track-deploy` repository is designed to behave, what it consumes (inputs), what it produces (cluster resources), and the compliance constraints it must adhere to.
 
-**Last updated:** 2026-02-07  
+**Last updated:** 2026-02-08  
 **Repository:** `dependency-track-deploy`  
 **Deployment target:** AKS, GHES GitHub Actions, Namespace `dependency-track`  
 **Ingress:** Traefik (managed by separate repository; out of scope here)
@@ -48,11 +48,30 @@
 - Helm and kubectl operations must execute in **GitHub Actions**.
 
 ### 3.2 GHES authentication to Azure
-- Baseline mode: **Service Principal + client secret**:
-  - `DEPLOY_CLIENT_ID` + `DEPLOY_SECRET`
-- GHES is private; **OIDC / Entra federation is an advanced option**:
-  - Variables are staged and documented as optional.
-  - Baseline must remain functional without OIDC.
+
+Baseline mode (must work): **Service Principal + client secret**
+
+- The workflow must log in using `az login --service-principal` with:
+  - `DEPLOY_CLIENT_ID`
+  - `DEPLOY_SECRET`
+  - `AZURE_TENANT_ID`
+  - `AZURE_SUBSCRIPTION_ID`
+- The workflow must isolate Azure CLI state per-run by using `AZURE_CONFIG_DIR` and clearing any prior auth (`az logout`, `az account clear`).
+
+AKS kubeconfig acquisition (non-admin): **kubelogin SPN conversion**
+
+- The workflow must acquire the kubeconfig using `az aks get-credentials` (Entra auth) and then run:
+  - `kubelogin convert-kubeconfig --login=spn --client-id ... --client-secret ... --tenant-id ...`
+- The workflow must fail if the resulting kubeconfig still references `command: azurecli` (interactive auth).
+
+Admin credential option
+
+- If `use_admin_credentials=true`, the workflow may use `az aks get-credentials --admin` and **must not** run kubelogin conversion.
+
+OIDC / Entra federation
+
+- GHES is private; treat OIDC as an advanced option.
+- Baseline must remain functional without OIDC.
 
 ### 3.3 Registry policy (Nexus-only)
 - All images must be pulled via the Nexus registry host `REGISTRY_SERVER`.
@@ -144,6 +163,20 @@ The tables below list **logical keys**. They may be stored as either Environment
 | `ALPINE_DATABASE_URL` | Var | Yes | `jdbc:postgresql://host:5432/dtrack?sslmode=require` | JDBC URL (must start with `jdbc:postgresql://`) |
 | `ALPINE_DATABASE_USERNAME` | Var | Yes | `dtrack_app` | DB username |
 | `ALPINE_DATABASE_PASSWORD` | Secret | Yes | `***` | DB password |
+| `ALPINE_DATABASE_DRIVER` | Var/Secret | No* | `org.postgresql.Driver` | JDBC driver class. Defaults to `org.postgresql.Driver`. Legacy alias: `DTRACK_ALPINE_DATABASE_DRIVER`. |
+
+*When deploying against **Azure Database for PostgreSQL – Flexible Server**, treat `ALPINE_DATABASE_DRIVER=org.postgresql.Driver` as **required**. We observed successful DB authentication/queries while the API server `/health/*` endpoints returned `503 Service Unavailable` until the driver was explicitly set. Configure it in GitHub Environment variables/secrets (don’t rely on in-cluster `kubectl patch`, which will be overwritten by the next deploy run).
+
+##### Azure Database for PostgreSQL – Flexible Server checklist
+
+Minimum compatibility requirements for a private AKS cluster accessing Flexible Server:
+
+- **TLS required:** JDBC URL must include `sslmode=require` (or stricter) and the server must be configured for SSL (default in Azure).
+- **Network path:** ensure **either** VNet integration **or** Private Endpoint connectivity exists from the AKS node subnets to the Flexible Server.
+- **DNS resolution:** for Private Endpoint, the `privatelink.postgres.database.azure.com` Private DNS zone must be linked to the AKS VNet so that the server FQDN resolves to a private IP.
+- **Firewall:** if using public access, allowlist the AKS egress IPs; for private access, ensure NSGs/UDRs allow egress to the server’s private IP.
+- **Authentication:** use a database role that can create/alter tables in the target database (Dependency-Track creates and migrates schema objects on startup).
+- **Driver class:** set `ALPINE_DATABASE_DRIVER=org.postgresql.Driver`.
 
 #### App exposure (Traefik)
 
@@ -187,7 +220,8 @@ The workflow must be safe to re-run and should implement:
 - Must use pinned chart version and robust flags:
   - `helm upgrade --install`
   - `--namespace dependency-track`
-  - `--wait --atomic --timeout $HELM_TIMEOUT`
+  - `--wait --timeout $HELM_TIMEOUT`
+  - `--atomic` is **enabled by default**, but is **disabled when `debug=true`** so that failed resources remain available for post-failure capture in `debug-artifacts`.
 - Values must:
   - Set ingress class and host
   - Bind TLS to `INGRESS_TLS_SECRET_NAME`

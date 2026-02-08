@@ -84,7 +84,7 @@ Define these as **GitHub Environment variables/secrets** (the workflow resolves 
 | `ALPINE_DATABASE_URL` | var/secret | JDBC URL preferred (example below). **Must not embed username/password.** |
 | `ALPINE_DATABASE_USERNAME` | var/secret | Postgres username |
 | `ALPINE_DATABASE_PASSWORD` | secret | Postgres password |
-| `DTRACK_ALPINE_DATABASE_DRIVER` | var | Optional. Defaults to `org.postgresql.Driver`. **Required for Azure Postgres Flexible Server** (ensures the correct JDBC driver is used). |
+| `ALPINE_DATABASE_DRIVER` | var/secret | Optional. Defaults to `org.postgresql.Driver`. **Required for Azure Postgres Flexible Server**. Legacy alias: `DTRACK_ALPINE_DATABASE_DRIVER`. |
 
 Example `ALPINE_DATABASE_URL`:
 
@@ -123,4 +123,4 @@ This repository targets **GitHub Enterprise Server**. Artifact actions must rema
 ## See also
 
 - `docs/plan.md` – design/requirements notes
-- `docs/Dependency-Track Deploy — Authoritative Design & Compliance.md` – authoritative compliance reference
+- `docs/Dependency-Track Deploy - Authoritative Design & Compliance.md` – authoritative compliance reference

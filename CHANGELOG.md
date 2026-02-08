@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.3.3
+- Workflow: restored the known-good Azure CLI login + `kubelogin convert-kubeconfig --login spn` sequence.
+- External Postgres: render `ALPINE_DATABASE_DRIVER` into `dependency-track-app-config` (defaults to `org.postgresql.Driver`), with support for legacy alias `DTRACK_ALPINE_DATABASE_DRIVER`.
+- Debugging: when `debug=true`, disable Helm `--atomic` so failed resources are not rolled back before the debug-artifacts job runs.
+
+## v0.3.2
+- Added support for GitHub variable `ALPINE_DATABASE_DRIVER` (preferred) with fallback to `DTRACK_ALPINE_DATABASE_DRIVER` (legacy).
+- Updated compliance guidance for Azure PostgreSQL Flexible Server driver requirement.
+
 
 ## v0.3.1
 - Add `DTRACK_ALPINE_DATABASE_DRIVER` (GitHub variable) and render it into the `dependency-track-app-config` secret as `ALPINE_DATABASE_DRIVER` when `ALPINE_DATABASE_MODE=external`. Defaults to `org.postgresql.Driver`.
