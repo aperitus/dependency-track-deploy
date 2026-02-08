@@ -223,6 +223,7 @@ jobs:
       ALPINE_DATABASE_PASSWORD: ${{ vars.ALPINE_DATABASE_PASSWORD != '' && vars.ALPINE_DATABASE_PASSWORD || secrets.ALPINE_DATABASE_PASSWORD }}
       # Azure Postgres Flexible Server compatibility: ensure the driver class is explicitly set
       ALPINE_DATABASE_DRIVER: ${{ vars.DTRACK_ALPINE_DATABASE_DRIVER != '' && vars.DTRACK_ALPINE_DATABASE_DRIVER || 'org.postgresql.Driver' }}
+      
 
       # Secret key persistence (mastered externally; workflow verifies drift and optionally creates secret on first run)
       DTRACK_SECRET_KEY: ${{ vars.DTRACK_SECRET_KEY != '' && vars.DTRACK_SECRET_KEY || secrets.DTRACK_SECRET_KEY }}
