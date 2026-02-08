@@ -223,7 +223,7 @@ jobs:
       ALPINE_DATABASE_PASSWORD: ${{ vars.ALPINE_DATABASE_PASSWORD != '' && vars.ALPINE_DATABASE_PASSWORD || secrets.ALPINE_DATABASE_PASSWORD }}
       # Azure Postgres Flexible Server compatibility: ensure the driver class is explicitly set
       ALPINE_DATABASE_DRIVER: ${{ vars.DTRACK_ALPINE_DATABASE_DRIVER != '' && vars.DTRACK_ALPINE_DATABASE_DRIVER || 'org.postgresql.Driver' }}
-      
+
 
       # Secret key persistence (mastered externally; workflow verifies drift and optionally creates secret on first run)
       DTRACK_SECRET_KEY: ${{ vars.DTRACK_SECRET_KEY != '' && vars.DTRACK_SECRET_KEY || secrets.DTRACK_SECRET_KEY }}
@@ -276,35 +276,49 @@ jobs:
           echo "REGISTRY_PASSWORD=(redacted)"
           echo "DTRACK_SECRET_KEY=(redacted)"
 
-      - name: Azure login (service principal)
+      - name: Azure login (Service Principal + secret)
+        shell: bash
         run: |
           set -euo pipefail
-          rm -rf "$AZURE_CONFIG_DIR" || true
-          mkdir -p "$AZURE_CONFIG_DIR"
+
+          rm -rf "${AZURE_CONFIG_DIR}" 2>/dev/null || true
+          mkdir -p "${AZURE_CONFIG_DIR}"
+          az logout --output=none 2>/dev/null || true
+          az account clear --output=none 2>/dev/null || true
 
           az login \
             --service-principal \
-            --username "$DEPLOY_CLIENT_ID" \
-            --password "$DEPLOY_SECRET" \
-            --tenant "$AZURE_TENANT_ID" \
-            --output none
+            --username="${DEPLOY_CLIENT_ID}" \
+            --password="${DEPLOY_SECRET}" \
+            --tenant="${AZURE_TENANT_ID}" \
+            --output=none
 
-          az account set --subscription "$AZURE_SUBSCRIPTION_ID"
+          az account set --subscription="${AZURE_SUBSCRIPTION_ID}"
 
-      - name: Get AKS credentials (kubeconfig) + convert for azurecli
+      - name: Get AKS credentials (Entra) + kubelogin convert
+        shell: bash
         run: |
           set -euo pipefail
-          mkdir -p "$(dirname "$KUBECONFIG")"
+          umask 077
 
           az aks get-credentials \
-            --resource-group "$AKS_RESOURCE_GROUP" \
-            --name "$AKS_CLUSTER_NAME" \
-            --file "$KUBECONFIG" \
+            --resource-group="${AKS_RESOURCE_GROUP}" \
+            --name="${AKS_CLUSTER_NAME}" \
+            ${ADMIN_FLAG} \
+            --file="${KUBECONFIG}" \
             --overwrite-existing
 
-          kubelogin convert-kubeconfig -l azurecli --kubeconfig "$KUBECONFIG"
+          kubelogin convert-kubeconfig \
+            --login="spn" \
+            --client-id="${DEPLOY_CLIENT_ID}" \
+            --client-secret="${DEPLOY_SECRET}" \
+            --tenant-id="${AZURE_TENANT_ID}" \
+            --kubeconfig="${KUBECONFIG}"
 
-          kubectl cluster-info
+          if grep --quiet "command: azurecli" "${KUBECONFIG}"; then
+            echo "ERROR: kubeconfig still references azurecli exec (interactive). kubelogin convert failed." >&2
+            exit 1
+          fi
 
       - name: Ensure namespace exists
         run: |
