@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.3.4
+- Fix: wire `DTRACK_SECRET_KEY_CREATE` into Helm values rendering (replaces `<DTRACK_SECRET_KEY_CREATE>` placeholder) and validate it as a boolean string.
+- Fix: when `DTRACK_SECRET_KEY` is supplied, the workflow forces `DTRACK_SECRET_KEY_CREATE=false` via `$GITHUB_ENV` to prevent chart-generated secret-key drift.
+
 ## v0.3.3
 - Workflow: restored the known-good Azure CLI login + `kubelogin convert-kubeconfig --login spn` sequence.
 - External Postgres: render `ALPINE_DATABASE_DRIVER` into `dependency-track-app-config` (defaults to `org.postgresql.Driver`), with support for legacy alias `DTRACK_ALPINE_DATABASE_DRIVER`.

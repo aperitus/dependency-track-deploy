@@ -97,6 +97,10 @@ jobs:
       INGRESS_TLS_SECRET_NAME: ${{ (vars.INGRESS_TLS_SECRET_NAME != '' && vars.INGRESS_TLS_SECRET_NAME) || (secrets.INGRESS_TLS_SECRET_NAME != '' && secrets.INGRESS_TLS_SECRET_NAME) || 'dtrack-wildcard-tls' }}
       DTRACK_APP_CONFIG_SECRET_NAME: ${{ (vars.DTRACK_APP_CONFIG_SECRET_NAME != '' && vars.DTRACK_APP_CONFIG_SECRET_NAME) || (secrets.DTRACK_APP_CONFIG_SECRET_NAME != '' && secrets.DTRACK_APP_CONFIG_SECRET_NAME) || 'dependency-track-app-config' }}
       DTRACK_SECRET_KEY_EXISTING_SECRET_NAME: ${{ (vars.DTRACK_SECRET_KEY_EXISTING_SECRET_NAME != '' && vars.DTRACK_SECRET_KEY_EXISTING_SECRET_NAME) || (secrets.DTRACK_SECRET_KEY_EXISTING_SECRET_NAME != '' && secrets.DTRACK_SECRET_KEY_EXISTING_SECRET_NAME) || 'dtrack-secret-key' }}
+      # Helm chart secret key behaviour
+      # NOTE: When DTRACK_SECRET_KEY is supplied, the workflow forces this to "false" during preflight
+      # to prevent the chart generating a different key.
+      DTRACK_SECRET_KEY_CREATE: ${{ (vars.DTRACK_SECRET_KEY_CREATE != '' && vars.DTRACK_SECRET_KEY_CREATE) || (secrets.DTRACK_SECRET_KEY_CREATE != '' && secrets.DTRACK_SECRET_KEY_CREATE) || 'false' }}
 
       # Mastered secret key material (base64) - REQUIRED
       DTRACK_SECRET_KEY: ${{ secrets.DTRACK_SECRET_KEY }}
@@ -207,6 +211,21 @@ jobs:
 
           : "${DTRACK_SECRET_KEY_EXISTING_SECRET_NAME:?DTRACK_SECRET_KEY_EXISTING_SECRET_NAME empty}"
           : "${DTRACK_SECRET_KEY:?DTRACK_SECRET_KEY empty (must be a GitHub Environment Secret mastered from Key Vault)}"
+
+          # Determine effective value for Helm chart secret-key handling
+          # We always supply a mastered DTRACK_SECRET_KEY via Kubernetes Secret, so the chart
+          # must not generate its own key. If a caller sets DTRACK_SECRET_KEY_CREATE=true, we
+          # override it here to avoid key drift across upgrades.
+          EFFECTIVE_DTRACK_SECRET_KEY_CREATE="${DTRACK_SECRET_KEY_CREATE:-false}"
+          if [[ -n "${DTRACK_SECRET_KEY:-}" ]]; then
+            EFFECTIVE_DTRACK_SECRET_KEY_CREATE="false"
+          fi
+          case "${EFFECTIVE_DTRACK_SECRET_KEY_CREATE}" in
+            true|false) ;;
+            *) echo "ERROR: DTRACK_SECRET_KEY_CREATE must be 'true' or 'false' (got '${EFFECTIVE_DTRACK_SECRET_KEY_CREATE}')." >&2; exit 1 ;;
+          esac
+          echo "DTRACK_SECRET_KEY_CREATE=${EFFECTIVE_DTRACK_SECRET_KEY_CREATE}" >> "${GITHUB_ENV}"
+
 
           # Validate DTRACK_SECRET_KEY is base64 and decodes to >= 32 bytes.
           key_b64="$(echo -n "${DTRACK_SECRET_KEY}" | tr -d '\r\n ' )"
@@ -431,6 +450,7 @@ jobs:
           perl -pe 's/<REGISTRY_SERVER>/$ENV{REGISTRY_SERVER}/g;
                     s/<IMAGE_PULL_SECRET_NAME>/$ENV{IMAGE_PULL_SECRET_NAME}/g;
                     s/<DTRACK_SECRET_KEY_EXISTING_SECRET_NAME>/$ENV{DTRACK_SECRET_KEY_EXISTING_SECRET_NAME}/g;
+                    s/<DTRACK_SECRET_KEY_CREATE>/$ENV{DTRACK_SECRET_KEY_CREATE}/g;
                     s/<DTRACK_APISERVER_IMAGE_REPOSITORY>/$ENV{DTRACK_APISERVER_IMAGE_REPOSITORY}/g;
                     s/<DTRACK_APISERVER_IMAGE_TAG>/$ENV{DTRACK_APISERVER_IMAGE_TAG}/g;
                     s/<DTRACK_FRONTEND_IMAGE_REPOSITORY>/$ENV{DTRACK_FRONTEND_IMAGE_REPOSITORY}/g;
@@ -604,6 +624,7 @@ jobs:
           perl -pe 's/<REGISTRY_SERVER>/$ENV{REGISTRY_SERVER}/g;
                     s/<IMAGE_PULL_SECRET_NAME>/$ENV{IMAGE_PULL_SECRET_NAME}/g;
                     s/<DTRACK_SECRET_KEY_EXISTING_SECRET_NAME>/$ENV{DTRACK_SECRET_KEY_EXISTING_SECRET_NAME}/g;
+                    s/<DTRACK_SECRET_KEY_CREATE>/$ENV{DTRACK_SECRET_KEY_CREATE}/g;
                     s/<DTRACK_APISERVER_IMAGE_REPOSITORY>/$ENV{DTRACK_APISERVER_IMAGE_REPOSITORY}/g;
                     s/<DTRACK_APISERVER_IMAGE_TAG>/$ENV{DTRACK_APISERVER_IMAGE_TAG}/g;
                     s/<DTRACK_FRONTEND_IMAGE_REPOSITORY>/$ENV{DTRACK_FRONTEND_IMAGE_REPOSITORY}/g;

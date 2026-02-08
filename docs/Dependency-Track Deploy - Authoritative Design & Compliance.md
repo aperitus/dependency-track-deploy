@@ -196,6 +196,7 @@ Minimum compatibility requirements for a private AKS cluster accessing Flexible 
 | `DTRACK_FRONTEND_IMAGE_REPOSITORY` | Var | Yes | `dependencytrack/frontend` | Repository under `REGISTRY_SERVER` |
 | `DTRACK_APISERVER_IMAGE_TAG` | Var | No | (blank) | Optional override (else chart default) |
 | `DTRACK_FRONTEND_IMAGE_TAG` | Var | No | (blank) | Optional override (else chart default) |
+| `DTRACK_SECRET_KEY_CREATE` | Var | No | `false` | Rendered into Helm values (`common.secretKey.createSecret`). Wh...
 
 #### Secret key mastery (Key Vault mastered)
 
@@ -235,6 +236,8 @@ The workflow must be safe to re-run and should implement:
 
 ### 7.1 Purpose of the secret key
 Dependency-Track uses a server-side secret key for cryptographic operations (signing/encryption). This key must be stable over time.
+
+The chart also exposes `common.secretKey.createSecret`. In this deployment, secret material is mastered via `DTRACK_SECRET_KEY`, so the workflow forces `DTRACK_SECRET_KEY_CREATE=false` to prevent Helm from generating a different key.
 
 ### 7.2 Kubernetes secret format
 The K8s secret must exist in `dependency-track` namespace and contain base64-encoded key data. The chart commonly expects `secret.key` (and some templates use `secretKey`).

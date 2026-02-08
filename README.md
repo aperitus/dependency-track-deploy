@@ -109,7 +109,7 @@ Example `ALPINE_DATABASE_URL`:
 | `IMAGE_PULL_SECRET_NAME` | `nexus-docker-creds` | Image pull secret name |
 | `DTRACK_APP_CONFIG_SECRET_NAME` | `dependency-track-app-config` | Secret holding DB config |
 | `DTRACK_SECRET_KEY_EXISTING_SECRET_NAME` | `dtrack-secret-key` | Secret name storing `secret.key` |
-| `DTRACK_SECRET_KEY_CREATE` | `true` | Create `secret.key` secret if missing |
+| `DTRACK_SECRET_KEY_CREATE` | `false` | Rendered into Helm values (`common.secretKey.createSecret`). When `DTRACK_SECRET_KEY` is supplied, the workflow forces this to `false` to prevent chart-generated key drift. |
 | `HELM_TIMEOUT` | `15m` | Helm wait timeout |
 
 ## GHES compatibility note
