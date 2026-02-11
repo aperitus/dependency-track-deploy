@@ -1,11 +1,15 @@
 # Changelog
 
-## v0.3.5
-- Added optional Dependency-Track **application-level OIDC connector** configuration (Entra ID):
-  - Mapped `DTRACK_OIDC_*` variables with vars-first fallback.
-  - Workflow appends an `oidc:` block to `values.generated.yaml` **only when** `DTRACK_OIDC_ENABLED=true`.
-  - Validates required OIDC inputs and enforces boolean strings for provisioning/sync flags.
+## v0.3.6
+- Fix: remove duplicated `DTRACK_OIDC_*` environment mappings.
+- Fix: when `DTRACK_OIDC_ENABLED=true`, the workflow writes `ALPINE_OIDC_*` keys into the Dependency-Track app config secret (`${DTRACK_APP_CONFIG_SECRET_NAME}`) via `${RUNNER_TEMP}/dtrack.env`.
+- Note: the workflow no longer attempts to render an `oidc:` block into `values.generated.yaml` (the official chart consumes env vars via `apiServer.extraEnvFrom`).
 - Documentation updated (README + authoritative compliance).
+
+## v0.3.5
+- Added optional Dependency-Track **application-level OIDC connector** inputs (Entra ID):
+  - Mapped `DTRACK_OIDC_*` variables with vars-first fallback.
+  - Documentation updated (README + authoritative compliance).
 
 ## v0.3.4
 - Fix: wire `DTRACK_SECRET_KEY_CREATE` into Helm values rendering (replaces `<DTRACK_SECRET_KEY_CREATE>` placeholder) and validate it as a boolean string.

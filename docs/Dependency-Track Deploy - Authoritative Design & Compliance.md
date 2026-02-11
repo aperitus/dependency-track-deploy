@@ -229,28 +229,28 @@ The workflow must be safe to re-run and should implement:
   - Override image registry to `REGISTRY_SERVER` for all components
   - Use `imagePullSecrets` referencing `IMAGE_PULL_SECRET_NAME`
   - Reference the app-config secret for environment variables
-  - Optionally render `oidc:` connector settings **only when** `DTRACK_OIDC_ENABLED=true` (omit entirely when disabled)
+  - Optionally write `ALPINE_OIDC_*` keys into the app-config secret **only when** `DTRACK_OIDC_ENABLED=true` (omit entirely when disabled)
 
 ### 6.3 Optional: Dependency-Track OIDC connector (application authentication)
 
 This is **not** Azure login OIDC. This is Dependency-Track's **application-level** OIDC connector used for user authentication.
 
 **Gate:**
-- If `DTRACK_OIDC_ENABLED` (vars-first fallback) evaluates to the string `"true"` (case-insensitive), the workflow appends an `oidc:` block to `values.generated.yaml`.
-- If disabled or unset, the workflow must **not** render any `oidc:` keys to avoid values churn.
+- If `DTRACK_OIDC_ENABLED` (vars-first fallback) evaluates to the string "true" (case-insensitive), the workflow writes `ALPINE_OIDC_*` keys into the app-config env file (`${RUNNER_TEMP}/dtrack.env`) and applies the Kubernetes secret `${DTRACK_APP_CONFIG_SECRET_NAME}`.
+- If disabled or unset, the workflow must **not** write any `ALPINE_OIDC_*` keys to avoid drift.
 
 **Inputs (vars-first fallback):**
 - `DTRACK_OIDC_ENABLED` (`true`/`false` string)
 - `DTRACK_OIDC_ISSUER` (e.g. `https://login.microsoftonline.com/<tenantId>/v2.0`)
 - `DTRACK_OIDC_CLIENT_ID` (Entra application client ID)
 - `DTRACK_OIDC_USER_CLAIM` (default: `preferred_username`)
-- `DTRACK_OIDC_USER_PROVISIONING` (`true`/`false`, emitted as YAML boolean)
-- `DTRACK_OIDC_TEAM_SYNCHRONIZATION` (`true`/`false`, emitted as YAML boolean)
+- `DTRACK_OIDC_USER_PROVISIONING` (`true`/`false` string; written into the app-config secret)
+- `DTRACK_OIDC_TEAM_SYNCHRONIZATION` (`true`/`false` string; written into the app-config secret)
 - `DTRACK_OIDC_TEAMS_CLAIM` (default: `groups`)
 
 **Required behaviour:**
 - When enabled, fail fast if any required OIDC inputs are missing.
-- Never print these values to logs; only write to the generated values file.
+- Never print these values to logs; only write to the app-config env file (`${RUNNER_TEMP}/dtrack.env`) and apply via `kubectl create secret --from-env-file`.
 
 ---
 
@@ -364,7 +364,7 @@ Implementation and rollout of this mode must not break baseline SP mode.
 - [ ] Registry uses `REGISTRY_*` only (Nexus-only)
 - [ ] All sensitive values treated as secrets; no leakage to logs/artefacts
 - [ ] Secret-key mastered in Key Vault; verify + fail on drift with remediation guidance
-- [ ] Optional: Dependency-Track OIDC connector variables mapped and only rendered when `DTRACK_OIDC_ENABLED=true`
+- [ ] Optional: Dependency-Track OIDC connector variables mapped and only written into the app-config secret when `DTRACK_OIDC_ENABLED=true`
 - [ ] Debug is a boolean input; debug artefacts produced in separate job even if deploy fails
 - [ ] Required GitHub Environment vars/secrets are documented with examples
 

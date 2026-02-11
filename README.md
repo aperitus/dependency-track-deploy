@@ -116,7 +116,7 @@ Example `ALPINE_DATABASE_URL`:
 
 If you want Dependency-Track to authenticate users via Entra ID (OIDC), set `DTRACK_OIDC_ENABLED=true` and provide the remaining variables.
 
-**Behaviour:** the workflow only renders the `oidc:` block into `values.generated.yaml` when `DTRACK_OIDC_ENABLED` evaluates to `true`. When disabled, the OIDC stanza is omitted entirely.
+**Behaviour:** when `DTRACK_OIDC_ENABLED` evaluates to `true` (case-insensitive), the workflow writes `ALPINE_OIDC_*` entries into the app-config env file (`${RUNNER_TEMP}/dtrack.env`) and recreates the Kubernetes secret `${DTRACK_APP_CONFIG_SECRET_NAME}`. When disabled, no `ALPINE_OIDC_*` entries are written (no drift).
 
 | Name | Default | Notes |
 |---|---:|---|
@@ -124,8 +124,8 @@ If you want Dependency-Track to authenticate users via Entra ID (OIDC), set `DTR
 | `DTRACK_OIDC_ISSUER` | *(empty)* | Typically `https://login.microsoftonline.com/<tenantId>/v2.0` |
 | `DTRACK_OIDC_CLIENT_ID` | *(empty)* | Entra application (client) ID for the Dependency-Track OIDC connector |
 | `DTRACK_OIDC_USER_CLAIM` | `preferred_username` | Username claim to map to D-Track principal |
-| `DTRACK_OIDC_USER_PROVISIONING` | `true` | Must be `true`/`false` (emitted as YAML boolean) |
-| `DTRACK_OIDC_TEAM_SYNCHRONIZATION` | `true` | Must be `true`/`false` (emitted as YAML boolean) |
+| `DTRACK_OIDC_USER_PROVISIONING` | `true` | Must be `true`/`false` (written into the app-config secret) |
+| `DTRACK_OIDC_TEAM_SYNCHRONIZATION` | `true` | Must be `true`/`false` (written into the app-config secret) |
 | `DTRACK_OIDC_TEAMS_CLAIM` | `groups` | Group/team claim |
 
 ## GHES compatibility note
