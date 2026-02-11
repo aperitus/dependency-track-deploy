@@ -115,6 +115,40 @@ jobs:
       DTRACK_FRONTEND_API_BASE_URL: ${{ (vars.DTRACK_FRONTEND_API_BASE_URL != '' && vars.DTRACK_FRONTEND_API_BASE_URL) || (secrets.DTRACK_FRONTEND_API_BASE_URL != '' && secrets.DTRACK_FRONTEND_API_BASE_URL) || '' }}
       DTRACK_INGRESS_ANNOTATIONS_JSON: ${{ (vars.DTRACK_INGRESS_ANNOTATIONS_JSON != '' && vars.DTRACK_INGRESS_ANNOTATIONS_JSON) || (secrets.DTRACK_INGRESS_ANNOTATIONS_JSON != '' && secrets.DTRACK_INGRESS_ANNOTATIONS_JSON) || '{}' }}
 
+      # Optional: Dependency-Track OIDC connector configuration (app-level auth)
+      DTRACK_OIDC_ENABLED: ${{ (vars.DTRACK_OIDC_ENABLED != '' && vars.DTRACK_OIDC_ENABLED) || (secrets.DTRACK_OIDC_ENABLED != '' && secrets.DTRACK_OIDC_ENABLED) || 'false' }}
+      DTRACK_OIDC_ISSUER: ${{ (vars.DTRACK_OIDC_ISSUER != '' && vars.DTRACK_OIDC_ISSUER) || (secrets.DTRACK_OIDC_ISSUER != '' && secrets.DTRACK_OIDC_ISSUER) || '' }}
+      DTRACK_OIDC_CLIENT_ID: ${{ (vars.DTRACK_OIDC_CLIENT_ID != '' && vars.DTRACK_OIDC_CLIENT_ID) || (secrets.DTRACK_OIDC_CLIENT_ID != '' && secrets.DTRACK_OIDC_CLIENT_ID) || '' }}
+      DTRACK_OIDC_USER_CLAIM: ${{ (vars.DTRACK_OIDC_USER_CLAIM != '' && vars.DTRACK_OIDC_USER_CLAIM) || (secrets.DTRACK_OIDC_USER_CLAIM != '' && secrets.DTRACK_OIDC_USER_CLAIM) || 'preferred_username' }}
+      DTRACK_OIDC_USER_PROVISIONING: ${{ (vars.DTRACK_OIDC_USER_PROVISIONING != '' && vars.DTRACK_OIDC_USER_PROVISIONING) || (secrets.DTRACK_OIDC_USER_PROVISIONING != '' && secrets.DTRACK_OIDC_USER_PROVISIONING) || 'true' }}
+      DTRACK_OIDC_TEAM_SYNCHRONIZATION: ${{ (vars.DTRACK_OIDC_TEAM_SYNCHRONIZATION != '' && vars.DTRACK_OIDC_TEAM_SYNCHRONIZATION) || (secrets.DTRACK_OIDC_TEAM_SYNCHRONIZATION != '' && secrets.DTRACK_OIDC_TEAM_SYNCHRONIZATION) || 'true' }}
+      DTRACK_OIDC_TEAMS_CLAIM: ${{ (vars.DTRACK_OIDC_TEAMS_CLAIM != '' && vars.DTRACK_OIDC_TEAMS_CLAIM) || (secrets.DTRACK_OIDC_TEAMS_CLAIM != '' && secrets.DTRACK_OIDC_TEAMS_CLAIM) || 'groups' }}
+
+      # ----------------------------------------------------------------------
+      # Optional: Dependency-Track OIDC connector configuration (app-level auth)
+      # Only rendered into Helm values when DTRACK_OIDC_ENABLED is "true".
+      # ----------------------------------------------------------------------
+
+      DTRACK_OIDC_ENABLED: ${{ (vars.DTRACK_OIDC_ENABLED != '' && vars.DTRACK_OIDC_ENABLED) || (secrets.DTRACK_OIDC_ENABLED != '' && secrets.DTRACK_OIDC_ENABLED) || 'false' }}
+      DTRACK_OIDC_ISSUER: ${{ (vars.DTRACK_OIDC_ISSUER != '' && vars.DTRACK_OIDC_ISSUER) || (secrets.DTRACK_OIDC_ISSUER != '' && secrets.DTRACK_OIDC_ISSUER) || '' }}
+      DTRACK_OIDC_CLIENT_ID: ${{ (vars.DTRACK_OIDC_CLIENT_ID != '' && vars.DTRACK_OIDC_CLIENT_ID) || (secrets.DTRACK_OIDC_CLIENT_ID != '' && secrets.DTRACK_OIDC_CLIENT_ID) || '' }}
+      DTRACK_OIDC_USER_CLAIM: ${{ (vars.DTRACK_OIDC_USER_CLAIM != '' && vars.DTRACK_OIDC_USER_CLAIM) || (secrets.DTRACK_OIDC_USER_CLAIM != '' && secrets.DTRACK_OIDC_USER_CLAIM) || 'preferred_username' }}
+      DTRACK_OIDC_USER_PROVISIONING: ${{ (vars.DTRACK_OIDC_USER_PROVISIONING != '' && vars.DTRACK_OIDC_USER_PROVISIONING) || (secrets.DTRACK_OIDC_USER_PROVISIONING != '' && secrets.DTRACK_OIDC_USER_PROVISIONING) || 'true' }}
+      DTRACK_OIDC_TEAM_SYNCHRONIZATION: ${{ (vars.DTRACK_OIDC_TEAM_SYNCHRONIZATION != '' && vars.DTRACK_OIDC_TEAM_SYNCHRONIZATION) || (secrets.DTRACK_OIDC_TEAM_SYNCHRONIZATION != '' && secrets.DTRACK_OIDC_TEAM_SYNCHRONIZATION) || 'true' }}
+      DTRACK_OIDC_TEAMS_CLAIM: ${{ (vars.DTRACK_OIDC_TEAMS_CLAIM != '' && vars.DTRACK_OIDC_TEAMS_CLAIM) || (secrets.DTRACK_OIDC_TEAMS_CLAIM != '' && secrets.DTRACK_OIDC_TEAMS_CLAIM) || 'groups' }}
+
+      # ----------------------------------------------------------------------
+      # Dependency-Track OIDC (optional)
+      # Only rendered into Helm values when DTRACK_OIDC_ENABLED=true.
+      # ----------------------------------------------------------------------
+      DTRACK_OIDC_ENABLED: ${{ (vars.DTRACK_OIDC_ENABLED != '' && vars.DTRACK_OIDC_ENABLED) || (secrets.DTRACK_OIDC_ENABLED != '' && secrets.DTRACK_OIDC_ENABLED) || 'false' }}
+      DTRACK_OIDC_ISSUER: ${{ (vars.DTRACK_OIDC_ISSUER != '' && vars.DTRACK_OIDC_ISSUER) || (secrets.DTRACK_OIDC_ISSUER != '' && secrets.DTRACK_OIDC_ISSUER) || '' }}
+      DTRACK_OIDC_CLIENT_ID: ${{ (vars.DTRACK_OIDC_CLIENT_ID != '' && vars.DTRACK_OIDC_CLIENT_ID) || (secrets.DTRACK_OIDC_CLIENT_ID != '' && secrets.DTRACK_OIDC_CLIENT_ID) || '' }}
+      DTRACK_OIDC_USER_CLAIM: ${{ (vars.DTRACK_OIDC_USER_CLAIM != '' && vars.DTRACK_OIDC_USER_CLAIM) || (secrets.DTRACK_OIDC_USER_CLAIM != '' && secrets.DTRACK_OIDC_USER_CLAIM) || 'preferred_username' }}
+      DTRACK_OIDC_USER_PROVISIONING: ${{ (vars.DTRACK_OIDC_USER_PROVISIONING != '' && vars.DTRACK_OIDC_USER_PROVISIONING) || (secrets.DTRACK_OIDC_USER_PROVISIONING != '' && secrets.DTRACK_OIDC_USER_PROVISIONING) || 'true' }}
+      DTRACK_OIDC_TEAM_SYNCHRONIZATION: ${{ (vars.DTRACK_OIDC_TEAM_SYNCHRONIZATION != '' && vars.DTRACK_OIDC_TEAM_SYNCHRONIZATION) || (secrets.DTRACK_OIDC_TEAM_SYNCHRONIZATION != '' && secrets.DTRACK_OIDC_TEAM_SYNCHRONIZATION) || 'true' }}
+      DTRACK_OIDC_TEAMS_CLAIM: ${{ (vars.DTRACK_OIDC_TEAMS_CLAIM != '' && vars.DTRACK_OIDC_TEAMS_CLAIM) || (secrets.DTRACK_OIDC_TEAMS_CLAIM != '' && secrets.DTRACK_OIDC_TEAMS_CLAIM) || 'groups' }}
+
       # PV placeholders (explicit defaults)
       DTRACK_APISERVER_PV_ENABLED: ${{ (vars.DTRACK_APISERVER_PV_ENABLED != '' && vars.DTRACK_APISERVER_PV_ENABLED) || (secrets.DTRACK_APISERVER_PV_ENABLED != '' && secrets.DTRACK_APISERVER_PV_ENABLED) || 'false' }}
       DTRACK_APISERVER_PV_CLASSNAME: ${{ (vars.DTRACK_APISERVER_PV_CLASSNAME != '' && vars.DTRACK_APISERVER_PV_CLASSNAME) || (secrets.DTRACK_APISERVER_PV_CLASSNAME != '' && secrets.DTRACK_APISERVER_PV_CLASSNAME) || '' }}
@@ -465,6 +499,47 @@ jobs:
                     s/<DTRACK_APISERVER_PV_SIZE>/$ENV{DTRACK_APISERVER_PV_SIZE}/g;
                     s/<DTRACK_INGRESS_ANNOTATIONS_JSON>/$ENV{DTRACK_INGRESS_ANNOTATIONS_JSON}/g;' "${TEMPLATE}" > "${OUT}"
 
+          # ------------------------------------------------------------------
+          # Optional: Dependency-Track OIDC connector config (app-level auth)
+          # Append ONLY when enabled to avoid chart values churn.
+          # ------------------------------------------------------------------
+          oidc_enabled="$(printf '%s' "${DTRACK_OIDC_ENABLED:-false}" | tr '[:upper:]' '[:lower:]')"
+          if [[ "${oidc_enabled}" == "true" ]]; then
+            : "${DTRACK_OIDC_ISSUER:?DTRACK_OIDC_ISSUER is required when DTRACK_OIDC_ENABLED=true}"
+            : "${DTRACK_OIDC_CLIENT_ID:?DTRACK_OIDC_CLIENT_ID is required when DTRACK_OIDC_ENABLED=true}"
+            : "${DTRACK_OIDC_USER_CLAIM:?DTRACK_OIDC_USER_CLAIM is required when DTRACK_OIDC_ENABLED=true}"
+            : "${DTRACK_OIDC_USER_PROVISIONING:?DTRACK_OIDC_USER_PROVISIONING is required when DTRACK_OIDC_ENABLED=true}"
+            : "${DTRACK_OIDC_TEAM_SYNCHRONIZATION:?DTRACK_OIDC_TEAM_SYNCHRONIZATION is required when DTRACK_OIDC_ENABLED=true}"
+            : "${DTRACK_OIDC_TEAMS_CLAIM:?DTRACK_OIDC_TEAMS_CLAIM is required when DTRACK_OIDC_ENABLED=true}"
+
+            # normalise boolean-ish values
+            up="$(printf '%s' "${DTRACK_OIDC_USER_PROVISIONING}" | tr '[:upper:]' '[:lower:]')"
+            ts="$(printf '%s' "${DTRACK_OIDC_TEAM_SYNCHRONIZATION}" | tr '[:upper:]' '[:lower:]')"
+            if [[ "${up}" != "true" && "${up}" != "false" ]]; then
+              echo "ERROR: DTRACK_OIDC_USER_PROVISIONING must be 'true' or 'false'" >&2
+              exit 1
+            fi
+            if [[ "${ts}" != "true" && "${ts}" != "false" ]]; then
+              echo "ERROR: DTRACK_OIDC_TEAM_SYNCHRONIZATION must be 'true' or 'false'" >&2
+              exit 1
+            fi
+
+            cat >> "${OUT}" <<YAML
+
+          # --------------------------------------------------------------------
+          # OIDC Configuration (conditional)
+          # --------------------------------------------------------------------
+          oidc:
+            enabled: true
+            issuer: "${DTRACK_OIDC_ISSUER}"
+            clientId: "${DTRACK_OIDC_CLIENT_ID}"
+            usernameClaim: "${DTRACK_OIDC_USER_CLAIM}"
+            userProvisioning: ${up}
+            teamSynchronization: ${ts}
+            teamsClaim: "${DTRACK_OIDC_TEAMS_CLAIM}"
+          YAML
+          fi
+
           chmod 600 "${OUT}"
           test -s "${OUT}"
 
@@ -552,6 +627,19 @@ jobs:
       DTRACK_FRONTEND_API_BASE_URL: ${{ (vars.DTRACK_FRONTEND_API_BASE_URL != '' && vars.DTRACK_FRONTEND_API_BASE_URL) || (secrets.DTRACK_FRONTEND_API_BASE_URL != '' && secrets.DTRACK_FRONTEND_API_BASE_URL) || '' }}
       DTRACK_INGRESS_ANNOTATIONS_JSON: ${{ (vars.DTRACK_INGRESS_ANNOTATIONS_JSON != '' && vars.DTRACK_INGRESS_ANNOTATIONS_JSON) || (secrets.DTRACK_INGRESS_ANNOTATIONS_JSON != '' && secrets.DTRACK_INGRESS_ANNOTATIONS_JSON) || '{}' }}
 
+      # ----------------------------------------------------------------------
+      # Optional: Dependency-Track OIDC connector configuration (app-level auth)
+      # Only rendered into Helm values when DTRACK_OIDC_ENABLED is "true".
+      # ----------------------------------------------------------------------
+
+      DTRACK_OIDC_ENABLED: ${{ (vars.DTRACK_OIDC_ENABLED != '' && vars.DTRACK_OIDC_ENABLED) || (secrets.DTRACK_OIDC_ENABLED != '' && secrets.DTRACK_OIDC_ENABLED) || 'false' }}
+      DTRACK_OIDC_ISSUER: ${{ (vars.DTRACK_OIDC_ISSUER != '' && vars.DTRACK_OIDC_ISSUER) || (secrets.DTRACK_OIDC_ISSUER != '' && secrets.DTRACK_OIDC_ISSUER) || '' }}
+      DTRACK_OIDC_CLIENT_ID: ${{ (vars.DTRACK_OIDC_CLIENT_ID != '' && vars.DTRACK_OIDC_CLIENT_ID) || (secrets.DTRACK_OIDC_CLIENT_ID != '' && secrets.DTRACK_OIDC_CLIENT_ID) || '' }}
+      DTRACK_OIDC_USER_CLAIM: ${{ (vars.DTRACK_OIDC_USER_CLAIM != '' && vars.DTRACK_OIDC_USER_CLAIM) || (secrets.DTRACK_OIDC_USER_CLAIM != '' && secrets.DTRACK_OIDC_USER_CLAIM) || 'preferred_username' }}
+      DTRACK_OIDC_USER_PROVISIONING: ${{ (vars.DTRACK_OIDC_USER_PROVISIONING != '' && vars.DTRACK_OIDC_USER_PROVISIONING) || (secrets.DTRACK_OIDC_USER_PROVISIONING != '' && secrets.DTRACK_OIDC_USER_PROVISIONING) || 'true' }}
+      DTRACK_OIDC_TEAM_SYNCHRONIZATION: ${{ (vars.DTRACK_OIDC_TEAM_SYNCHRONIZATION != '' && vars.DTRACK_OIDC_TEAM_SYNCHRONIZATION) || (secrets.DTRACK_OIDC_TEAM_SYNCHRONIZATION != '' && secrets.DTRACK_OIDC_TEAM_SYNCHRONIZATION) || 'true' }}
+      DTRACK_OIDC_TEAMS_CLAIM: ${{ (vars.DTRACK_OIDC_TEAMS_CLAIM != '' && vars.DTRACK_OIDC_TEAMS_CLAIM) || (secrets.DTRACK_OIDC_TEAMS_CLAIM != '' && secrets.DTRACK_OIDC_TEAMS_CLAIM) || 'groups' }}
+
       DTRACK_APISERVER_PV_ENABLED: ${{ (vars.DTRACK_APISERVER_PV_ENABLED != '' && vars.DTRACK_APISERVER_PV_ENABLED) || (secrets.DTRACK_APISERVER_PV_ENABLED != '' && secrets.DTRACK_APISERVER_PV_ENABLED) || 'false' }}
       DTRACK_APISERVER_PV_CLASSNAME: ${{ (vars.DTRACK_APISERVER_PV_CLASSNAME != '' && vars.DTRACK_APISERVER_PV_CLASSNAME) || (secrets.DTRACK_APISERVER_PV_CLASSNAME != '' && secrets.DTRACK_APISERVER_PV_CLASSNAME) || '' }}
       DTRACK_APISERVER_PV_SIZE: ${{ (vars.DTRACK_APISERVER_PV_SIZE != '' && vars.DTRACK_APISERVER_PV_SIZE) || (secrets.DTRACK_APISERVER_PV_SIZE != '' && secrets.DTRACK_APISERVER_PV_SIZE) || '5Gi' }}
@@ -638,6 +726,46 @@ jobs:
                     s/<DTRACK_APISERVER_PV_CLASSNAME>/$ENV{DTRACK_APISERVER_PV_CLASSNAME}/g;
                     s/<DTRACK_APISERVER_PV_SIZE>/$ENV{DTRACK_APISERVER_PV_SIZE}/g;
                     s/<DTRACK_INGRESS_ANNOTATIONS_JSON>/$ENV{DTRACK_INGRESS_ANNOTATIONS_JSON}/g;' "${TEMPLATE}" > "${OUT}"
+
+          # ------------------------------------------------------------------
+          # Optional: Dependency-Track OIDC connector config (app-level auth)
+          # Append ONLY when enabled to avoid chart values churn.
+          # ------------------------------------------------------------------
+          oidc_enabled="$(printf '%s' "${DTRACK_OIDC_ENABLED:-false}" | tr '[:upper:]' '[:lower:]')"
+          if [[ "${oidc_enabled}" == "true" ]]; then
+            : "${DTRACK_OIDC_ISSUER:?DTRACK_OIDC_ISSUER is required when DTRACK_OIDC_ENABLED=true}"
+            : "${DTRACK_OIDC_CLIENT_ID:?DTRACK_OIDC_CLIENT_ID is required when DTRACK_OIDC_ENABLED=true}"
+            : "${DTRACK_OIDC_USER_CLAIM:?DTRACK_OIDC_USER_CLAIM is required when DTRACK_OIDC_ENABLED=true}"
+            : "${DTRACK_OIDC_USER_PROVISIONING:?DTRACK_OIDC_USER_PROVISIONING is required when DTRACK_OIDC_ENABLED=true}"
+            : "${DTRACK_OIDC_TEAM_SYNCHRONIZATION:?DTRACK_OIDC_TEAM_SYNCHRONIZATION is required when DTRACK_OIDC_ENABLED=true}"
+            : "${DTRACK_OIDC_TEAMS_CLAIM:?DTRACK_OIDC_TEAMS_CLAIM is required when DTRACK_OIDC_ENABLED=true}"
+
+            up="$(printf '%s' "${DTRACK_OIDC_USER_PROVISIONING}" | tr '[:upper:]' '[:lower:]')"
+            ts="$(printf '%s' "${DTRACK_OIDC_TEAM_SYNCHRONIZATION}" | tr '[:upper:]' '[:lower:]')"
+            if [[ "${up}" != "true" && "${up}" != "false" ]]; then
+              echo "ERROR: DTRACK_OIDC_USER_PROVISIONING must be 'true' or 'false'" >&2
+              exit 1
+            fi
+            if [[ "${ts}" != "true" && "${ts}" != "false" ]]; then
+              echo "ERROR: DTRACK_OIDC_TEAM_SYNCHRONIZATION must be 'true' or 'false'" >&2
+              exit 1
+            fi
+
+            cat >> "${OUT}" <<YAML
+
+          # --------------------------------------------------------------------
+          # OIDC Configuration (conditional)
+          # --------------------------------------------------------------------
+          oidc:
+            enabled: true
+            issuer: "${DTRACK_OIDC_ISSUER}"
+            clientId: "${DTRACK_OIDC_CLIENT_ID}"
+            usernameClaim: "${DTRACK_OIDC_USER_CLAIM}"
+            userProvisioning: ${up}
+            teamSynchronization: ${ts}
+            teamsClaim: "${DTRACK_OIDC_TEAMS_CLAIM}"
+          YAML
+          fi
 
           chmod 600 "${OUT}"
 

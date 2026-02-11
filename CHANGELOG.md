@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.3.5
+- Added optional Dependency-Track **application-level OIDC connector** configuration (Entra ID):
+  - Mapped `DTRACK_OIDC_*` variables with vars-first fallback.
+  - Workflow appends an `oidc:` block to `values.generated.yaml` **only when** `DTRACK_OIDC_ENABLED=true`.
+  - Validates required OIDC inputs and enforces boolean strings for provisioning/sync flags.
+- Documentation updated (README + authoritative compliance).
+
 ## v0.3.4
 - Fix: wire `DTRACK_SECRET_KEY_CREATE` into Helm values rendering (replaces `<DTRACK_SECRET_KEY_CREATE>` placeholder) and validate it as a boolean string.
 - Fix: when `DTRACK_SECRET_KEY` is supplied, the workflow forces `DTRACK_SECRET_KEY_CREATE=false` via `$GITHUB_ENV` to prevent chart-generated secret-key drift.

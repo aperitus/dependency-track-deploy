@@ -1,0 +1,84 @@
+
+flowchart TD
+  %% =========================
+  %% REPOSITORY (CODE) SHAPE
+  %% =========================
+  subgraph Repo["Repository: dependency-track-deploy"]
+    WF[".github/workflows/deploy-dependency-track.yaml<br/>(single source of execution logic)"]
+    VT["helm/dependency-track/values.template.yaml<br/>(values skeleton with placeholders)"]
+    DOC["docs/Dependency-Track Deploy — Authoritative Design & Compliance.md"]
+    CL["CHANGELOG.md"]
+  end
+
+  %% =========================
+  %% CONFIG INPUTS
+  %% =========================
+  subgraph GH["GitHub Actions Inputs"]
+    IN["workflow_dispatch inputs<br/>- use_admin_credentials<br/>- uninstall_after_deploy<br/>- debug_artifacts"]
+    VARS["GitHub Variables (non-secret)<br/>AKS_*, NEXUS_*, INGRESS_*, ALPINE_*"]
+    SECRETS["GitHub Secrets (secret)<br/>DEPLOY_SECRET, DTRACK_SECRET_KEY,<br/>ALPINE_DATABASE_PASSWORD,<br/>WILDCARD_CRT/WILDCARD_KEY,<br/>NEXUS creds, etc."]
+  end
+
+  IN --> WF
+  VARS --> WF
+  SECRETS --> WF
+  VT --> WF
+  DOC -. reference .-> WF
+  CL -. reference .-> WF
+
+  %% =========================
+  %% JOB: DEPLOY
+  %% =========================
+  subgraph J1["Job: deploy"]
+    P1["Init runtime paths<br/>- AZURE_CONFIG_DIR<br/>- KUBECONFIG<br/>- TEMP_DIR"]
+    P2["Install tooling<br/>kubectl / helm / kubelogin / jq"]
+    P3["Validate + derive effective config<br/>- enforce non-empty required vars<br/>- compute DTRACK_SECRET_KEY_CREATE_EFFECTIVE<br/>- include ALPINE_DATABASE_DRIVER if set"]
+    P4["Azure login (SP + secret)<br/>az login + az account set"]
+    P5["Get AKS credentials<br/>az aks get-credentials<br/>kubelogin convert (spn)<br/>(skip convert if --admin)"]
+    P6["Kubernetes bootstrap<br/>- ensure namespace<br/>- imagePullSecret<br/>- TLS secret (wildcard cert)"]
+    P7["Create/patch app secrets<br/>dependency-track-app-config includes:<br/>ALPINE_DATABASE_* + ALPINE_DATABASE_DRIVER<br/>ALPINE_BASE_URL, logging, etc."]
+    P8["Ensure Secret Key secret exists<br/>Create K8s Secret: DTRACK_SECRET_KEY_EXISTING_SECRET_NAME<br/>from GitHub Secret DTRACK_SECRET_KEY"]
+    P9["Chart source (Nexus)<br/>helm repo add/update<br/>helm pull dependency-track chart"]
+    P10["Generate values.generated.yaml<br/>VT (template) + perl substitutions:<br/>- ingress host/class/tls<br/>- external DB settings<br/>- secretKey create/useExisting<br/>- API server base URL, etc."]
+    P11["Deploy/upgrade<br/>helm upgrade --install dependency-track<br/>--values values.generated.yaml"]
+    P12["Post-deploy checks<br/>- wait for pods/statefulset<br/>- confirm Service has Ready endpoints<br/>- curl /health/* via debug pod<br/>(503 ⇒ app not started/ready)"]
+    P13["Optional uninstall<br/>(if uninstall_after_deploy == true)"]
+  end
+
+  WF --> P1 --> P2 --> P3 --> P4 --> P5 --> P6 --> P7 --> P8 --> P9 --> P10 --> P11 --> P12 --> P13
+
+  %% =========================
+  %% RUNTIME TARGETS
+  %% =========================
+  subgraph AKS["AKS Cluster"]
+    SVC["Service: dependency-track-api-server (ClusterIP:8080)"]
+    POD["Pod/STS: dependency-track-api-server-0<br/>Health endpoints:<br/>/health/started /ready /live"]
+    SEC1["Secret: dependency-track-app-config<br/>(ALPINE_DATABASE_URL/USER/PASS/DRIVER, etc.)"]
+    SEC2["Secret: DTRACK_SECRET_KEY_EXISTING_SECRET_NAME<br/>(master key)"]
+  end
+
+  subgraph AZPG["Azure PostgreSQL Flexible Server"]
+    PG["DB: dtrack<br/>JDBC over TLS (sslmode=require)"]
+  end
+
+  P7 --> SEC1 --> POD
+  P8 --> SEC2 --> POD
+  P11 --> SVC --> POD
+  POD --> PG
+
+  %% =========================
+  %% JOB: DEBUG ARTIFACTS
+  %% =========================
+  subgraph J2["Job: debug-artifacts (conditional)"]
+    D1["Collect live state after deploy<br/>- helm get all<br/>- kubectl get/describe (pods/svc/endpoints/events)<br/>- container logs"]
+    D2["Package + upload artifact<br/>debug_artifacts.tar.gz"]
+  end
+
+  P12 -->|needs: deploy<br/>if debug_artifacts == true| D1 --> D2
+
+  %% =========================
+  %% KEY NOTE
+  %% =========================
+  N1["Key fix applied in workflow config<br/>Set ALPINE_DATABASE_DRIVER = org.postgresql.Driver<br/>(in dependency-track-app-config secret)<br/>so API server reaches READY instead of 503"]
+  P3 -.-> N1
+  P7 -.-> N1

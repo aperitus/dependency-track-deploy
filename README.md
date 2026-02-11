@@ -112,6 +112,22 @@ Example `ALPINE_DATABASE_URL`:
 | `DTRACK_SECRET_KEY_CREATE` | `false` | Rendered into Helm values (`common.secretKey.createSecret`). When `DTRACK_SECRET_KEY` is supplied, the workflow forces this to `false` to prevent chart-generated key drift. |
 | `HELM_TIMEOUT` | `15m` | Helm wait timeout |
 
+## Optional: Dependency-Track OIDC connector (application authentication)
+
+If you want Dependency-Track to authenticate users via Entra ID (OIDC), set `DTRACK_OIDC_ENABLED=true` and provide the remaining variables.
+
+**Behaviour:** the workflow only renders the `oidc:` block into `values.generated.yaml` when `DTRACK_OIDC_ENABLED` evaluates to `true`. When disabled, the OIDC stanza is omitted entirely.
+
+| Name | Default | Notes |
+|---|---:|---|
+| `DTRACK_OIDC_ENABLED` | `false` | Gate. Must be the string `true` to enable rendering. |
+| `DTRACK_OIDC_ISSUER` | *(empty)* | Typically `https://login.microsoftonline.com/<tenantId>/v2.0` |
+| `DTRACK_OIDC_CLIENT_ID` | *(empty)* | Entra application (client) ID for the Dependency-Track OIDC connector |
+| `DTRACK_OIDC_USER_CLAIM` | `preferred_username` | Username claim to map to D-Track principal |
+| `DTRACK_OIDC_USER_PROVISIONING` | `true` | Must be `true`/`false` (emitted as YAML boolean) |
+| `DTRACK_OIDC_TEAM_SYNCHRONIZATION` | `true` | Must be `true`/`false` (emitted as YAML boolean) |
+| `DTRACK_OIDC_TEAMS_CLAIM` | `groups` | Group/team claim |
+
 ## GHES compatibility note
 
 This repository targets **GitHub Enterprise Server**. Artifact actions must remain on **v3**:
