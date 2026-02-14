@@ -229,6 +229,7 @@ The workflow must be safe to re-run and should implement:
   - Override image registry to `REGISTRY_SERVER` for all components
   - Use `imagePullSecrets` referencing `IMAGE_PULL_SECRET_NAME`
   - Reference the app-config secret for environment variables
+  - Reference the frontend config secret for OIDC client environment variables (`frontend.extraEnvFrom`)
   - Optionally write `ALPINE_OIDC_*` keys into the app-config secret **only when** `DTRACK_OIDC_ENABLED=true` (omit entirely when disabled)
 
 ### 6.3 Optional: Dependency-Track OIDC connector (application authentication)
@@ -238,6 +239,14 @@ This is **not** Azure login OIDC. This is Dependency-Track's **application-level
 **Gate:**
 - If `DTRACK_OIDC_ENABLED` (vars-first fallback) evaluates to the string "true" (case-insensitive), the workflow writes `ALPINE_OIDC_*` keys into the app-config env file (`${RUNNER_TEMP}/dtrack.env`) and applies the Kubernetes secret `${DTRACK_APP_CONFIG_SECRET_NAME}`.
 - If disabled or unset, the workflow must **not** write any `ALPINE_OIDC_*` keys to avoid drift.
+
+
+**Frontend client configuration:**
+- Dependency-Track's frontend requires `OIDC_*` environment variables (client config) in addition to the API server's `ALPINE_OIDC_*` configuration.
+- The workflow creates/updates a separate Kubernetes secret `${DTRACK_FRONTEND_CONFIG_SECRET_NAME}`:
+  - When `DTRACK_OIDC_ENABLED=true`, it writes `OIDC_ISSUER` and `OIDC_CLIENT_ID` (and optional `OIDC_FLOW`, `OIDC_SCOPE`, `OIDC_LOGIN_BUTTON_TEXT`) into `${RUNNER_TEMP}/dtrack-frontend.env` and applies the secret.
+  - When disabled, it still ensures the secret exists (empty) so Helm upgrades are deterministic.
+- Helm values must wire this secret into the frontend via `frontend.extraEnvFrom`.
 
 **Inputs (vars-first fallback):**
 - `DTRACK_OIDC_ENABLED` (`true`/`false` string)

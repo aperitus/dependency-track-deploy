@@ -107,7 +107,8 @@ Example `ALPINE_DATABASE_URL`:
 | `DTRACK_INGRESS_HOST` | *(required)* | Hostname for the UI ingress |
 | `INGRESS_TLS_SECRET_NAME` | `wildcard-tls` | TLS secret name |
 | `IMAGE_PULL_SECRET_NAME` | `nexus-docker-creds` | Image pull secret name |
-| `DTRACK_APP_CONFIG_SECRET_NAME` | `dependency-track-app-config` | Secret holding DB config |
+| `DTRACK_APP_CONFIG_SECRET_NAME` | `dependency-track-app-config` | Secret holding API server config (DB + optional `ALPINE_OIDC_*`) |
+| `DTRACK_FRONTEND_CONFIG_SECRET_NAME` | `dependency-track-frontend-config` | Secret holding frontend OIDC client config (`OIDC_*`). Created empty when OIDC disabled. |
 | `DTRACK_SECRET_KEY_EXISTING_SECRET_NAME` | `dtrack-secret-key` | Secret name storing `secret.key` |
 | `DTRACK_SECRET_KEY_CREATE` | `false` | Rendered into Helm values (`common.secretKey.createSecret`). When `DTRACK_SECRET_KEY` is supplied, the workflow forces this to `false` to prevent chart-generated key drift. |
 | `HELM_TIMEOUT` | `15m` | Helm wait timeout |
@@ -118,6 +119,11 @@ If you want Dependency-Track to authenticate users via Entra ID (OIDC), set `DTR
 
 **Behaviour:** when `DTRACK_OIDC_ENABLED` evaluates to `true` (case-insensitive), the workflow writes `ALPINE_OIDC_*` entries into the app-config env file (`${RUNNER_TEMP}/dtrack.env`) and recreates the Kubernetes secret `${DTRACK_APP_CONFIG_SECRET_NAME}`. When disabled, no `ALPINE_OIDC_*` entries are written (no drift).
 
+Frontend also requires OIDC client configuration via `OIDC_*` environment variables. The workflow creates/updates a separate Kubernetes secret (`${DTRACK_FRONTEND_CONFIG_SECRET_NAME}`) and wires it into the Helm release via `frontend.extraEnvFrom`.
+
+- When `DTRACK_OIDC_ENABLED=true`, the workflow writes `OIDC_ISSUER` and `OIDC_CLIENT_ID` (and optional `OIDC_FLOW`, `OIDC_SCOPE`, `OIDC_LOGIN_BUTTON_TEXT`) into `${RUNNER_TEMP}/dtrack-frontend.env` and applies the secret.
+- When disabled, the workflow still ensures the secret exists (empty) so upgrades remain deterministic.
+
 | Name | Default | Notes |
 |---|---:|---|
 | `DTRACK_OIDC_ENABLED` | `false` | Gate. Must be the string `true` to enable rendering. |
@@ -127,6 +133,9 @@ If you want Dependency-Track to authenticate users via Entra ID (OIDC), set `DTR
 | `DTRACK_OIDC_USER_PROVISIONING` | `true` | Must be `true`/`false` (written into the app-config secret) |
 | `DTRACK_OIDC_TEAM_SYNCHRONIZATION` | `true` | Must be `true`/`false` (written into the app-config secret) |
 | `DTRACK_OIDC_TEAMS_CLAIM` | `groups` | Group/team claim |
+| `DTRACK_OIDC_FLOW` | *(empty)* | Optional. Forwarded to frontend as `OIDC_FLOW` (e.g. `implicit`). |
+| `DTRACK_OIDC_SCOPE` | *(empty)* | Optional. Forwarded to frontend as `OIDC_SCOPE` (e.g. `openid profile email groups`). |
+| `DTRACK_OIDC_LOGIN_BUTTON_TEXT` | *(empty)* | Optional. Forwarded to frontend as `OIDC_LOGIN_BUTTON_TEXT`. |
 
 ## GHES compatibility note
 

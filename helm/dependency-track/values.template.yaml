@@ -39,6 +39,10 @@ frontend:
 
   apiBaseUrl: "<DTRACK_FRONTEND_API_BASE_URL>"
 
+  extraEnvFrom:
+    - secretRef:
+        name: "<DTRACK_FRONTEND_CONFIG_SECRET_NAME>"
+
 ingress:
   enabled: true
   hostname: "<DTRACK_INGRESS_HOST>"

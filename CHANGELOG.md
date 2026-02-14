@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.3.7
+- Fix: create/update a dedicated frontend config secret (`${DTRACK_FRONTEND_CONFIG_SECRET_NAME}`) and wire it into the Helm release via `frontend.extraEnvFrom`.
+- When `DTRACK_OIDC_ENABLED=true`, write `OIDC_*` values (client config) for the Dependency-Track frontend.
+- When OIDC is disabled, ensure the frontend secret exists (empty) to keep Helm upgrades deterministic.
+
 ## v0.3.6
 - Fix: remove duplicated `DTRACK_OIDC_*` environment mappings.
 - Fix: when `DTRACK_OIDC_ENABLED=true`, the workflow writes `ALPINE_OIDC_*` keys into the Dependency-Track app config secret (`${DTRACK_APP_CONFIG_SECRET_NAME}`) via `${RUNNER_TEMP}/dtrack.env`.

@@ -96,6 +96,7 @@ jobs:
       IMAGE_PULL_SECRET_NAME: ${{ (vars.IMAGE_PULL_SECRET_NAME != '' && vars.IMAGE_PULL_SECRET_NAME) || (secrets.IMAGE_PULL_SECRET_NAME != '' && secrets.IMAGE_PULL_SECRET_NAME) || 'nexus-pull' }}
       INGRESS_TLS_SECRET_NAME: ${{ (vars.INGRESS_TLS_SECRET_NAME != '' && vars.INGRESS_TLS_SECRET_NAME) || (secrets.INGRESS_TLS_SECRET_NAME != '' && secrets.INGRESS_TLS_SECRET_NAME) || 'dtrack-wildcard-tls' }}
       DTRACK_APP_CONFIG_SECRET_NAME: ${{ (vars.DTRACK_APP_CONFIG_SECRET_NAME != '' && vars.DTRACK_APP_CONFIG_SECRET_NAME) || (secrets.DTRACK_APP_CONFIG_SECRET_NAME != '' && secrets.DTRACK_APP_CONFIG_SECRET_NAME) || 'dependency-track-app-config' }}
+      DTRACK_FRONTEND_CONFIG_SECRET_NAME: ${{ (vars.DTRACK_FRONTEND_CONFIG_SECRET_NAME != "" && vars.DTRACK_FRONTEND_CONFIG_SECRET_NAME) || (secrets.DTRACK_FRONTEND_CONFIG_SECRET_NAME != "" && secrets.DTRACK_FRONTEND_CONFIG_SECRET_NAME) || "dependency-track-frontend-config" }}
       DTRACK_SECRET_KEY_EXISTING_SECRET_NAME: ${{ (vars.DTRACK_SECRET_KEY_EXISTING_SECRET_NAME != '' && vars.DTRACK_SECRET_KEY_EXISTING_SECRET_NAME) || (secrets.DTRACK_SECRET_KEY_EXISTING_SECRET_NAME != '' && secrets.DTRACK_SECRET_KEY_EXISTING_SECRET_NAME) || 'dtrack-secret-key' }}
       # Helm chart secret key behaviour
       # NOTE: When DTRACK_SECRET_KEY is supplied, the workflow forces this to "false" during preflight
@@ -123,6 +124,9 @@ jobs:
       DTRACK_OIDC_USER_PROVISIONING: ${{ (vars.DTRACK_OIDC_USER_PROVISIONING != '' && vars.DTRACK_OIDC_USER_PROVISIONING) || (secrets.DTRACK_OIDC_USER_PROVISIONING != '' && secrets.DTRACK_OIDC_USER_PROVISIONING) || 'true' }}
       DTRACK_OIDC_TEAM_SYNCHRONIZATION: ${{ (vars.DTRACK_OIDC_TEAM_SYNCHRONIZATION != '' && vars.DTRACK_OIDC_TEAM_SYNCHRONIZATION) || (secrets.DTRACK_OIDC_TEAM_SYNCHRONIZATION != '' && secrets.DTRACK_OIDC_TEAM_SYNCHRONIZATION) || 'true' }}
       DTRACK_OIDC_TEAMS_CLAIM: ${{ (vars.DTRACK_OIDC_TEAMS_CLAIM != '' && vars.DTRACK_OIDC_TEAMS_CLAIM) || (secrets.DTRACK_OIDC_TEAMS_CLAIM != '' && secrets.DTRACK_OIDC_TEAMS_CLAIM) || 'groups' }}
+      DTRACK_OIDC_FLOW: ${{ (vars.DTRACK_OIDC_FLOW != '' && vars.DTRACK_OIDC_FLOW) || (secrets.DTRACK_OIDC_FLOW != '' && secrets.DTRACK_OIDC_FLOW) || '' }}
+      DTRACK_OIDC_SCOPE: ${{ (vars.DTRACK_OIDC_SCOPE != '' && vars.DTRACK_OIDC_SCOPE) || (secrets.DTRACK_OIDC_SCOPE != '' && secrets.DTRACK_OIDC_SCOPE) || '' }}
+      DTRACK_OIDC_LOGIN_BUTTON_TEXT: ${{ (vars.DTRACK_OIDC_LOGIN_BUTTON_TEXT != '' && vars.DTRACK_OIDC_LOGIN_BUTTON_TEXT) || (secrets.DTRACK_OIDC_LOGIN_BUTTON_TEXT != '' && secrets.DTRACK_OIDC_LOGIN_BUTTON_TEXT) || '' }}
 
 
       # PV placeholders (explicit defaults)
@@ -476,195 +480,51 @@ jobs:
             --dry-run=client --output=yaml \
             | kubectl apply --filename=-
 
-      - name: Render values.generated.yaml (safe to publish as debug artefact)
+      
+
+      - name: Create/update frontend config secret (dependency-track)
         shell: bash
         run: |
           set -euo pipefail
           umask 077
 
-          # Generate from the template using simple placeholder replacement.
-          # Only non-sensitive values are inserted.
-          TEMPLATE="helm/dependency-track/values.template.yaml"
-          OUT="${RUNNER_TEMP}/values.generated.yaml"
+          SECRET_NAME="${DTRACK_FRONTEND_CONFIG_SECRET_NAME}"
 
-          # Use perl for robust multi-replace without shell-escaping issues.
-          perl -pe 's/<REGISTRY_SERVER>/$ENV{REGISTRY_SERVER}/g;
-                    s/<IMAGE_PULL_SECRET_NAME>/$ENV{IMAGE_PULL_SECRET_NAME}/g;
-                    s/<DTRACK_SECRET_KEY_EXISTING_SECRET_NAME>/$ENV{DTRACK_SECRET_KEY_EXISTING_SECRET_NAME}/g;
-                    s/<DTRACK_SECRET_KEY_CREATE>/$ENV{DTRACK_SECRET_KEY_CREATE}/g;
-                    s/<DTRACK_APISERVER_IMAGE_REPOSITORY>/$ENV{DTRACK_APISERVER_IMAGE_REPOSITORY}/g;
-                    s/<DTRACK_APISERVER_IMAGE_TAG>/$ENV{DTRACK_APISERVER_IMAGE_TAG}/g;
-                    s/<DTRACK_FRONTEND_IMAGE_REPOSITORY>/$ENV{DTRACK_FRONTEND_IMAGE_REPOSITORY}/g;
-                    s/<DTRACK_FRONTEND_IMAGE_TAG>/$ENV{DTRACK_FRONTEND_IMAGE_TAG}/g;
-                    s/<DTRACK_FRONTEND_API_BASE_URL>/$ENV{DTRACK_FRONTEND_API_BASE_URL}/g;
-                    s/<DTRACK_INGRESS_HOST>/$ENV{DTRACK_INGRESS_HOST}/g;
-                    s/<DTRACK_INGRESS_CLASS_NAME>/$ENV{DTRACK_INGRESS_CLASS_NAME}/g;
-                    s/<INGRESS_TLS_SECRET_NAME>/$ENV{INGRESS_TLS_SECRET_NAME}/g;
-                    s/<DTRACK_APP_CONFIG_SECRET_NAME>/$ENV{DTRACK_APP_CONFIG_SECRET_NAME}/g;
-                    s/<DTRACK_APISERVER_PV_ENABLED>/$ENV{DTRACK_APISERVER_PV_ENABLED}/g;
-                    s/<DTRACK_APISERVER_PV_CLASSNAME>/$ENV{DTRACK_APISERVER_PV_CLASSNAME}/g;
-                    s/<DTRACK_APISERVER_PV_SIZE>/$ENV{DTRACK_APISERVER_PV_SIZE}/g;
-                    s/<DTRACK_INGRESS_ANNOTATIONS_JSON>/$ENV{DTRACK_INGRESS_ANNOTATIONS_JSON}/g;' "${TEMPLATE}" > "${OUT}"
+          # Frontend expects OIDC_* env vars (client config).
+          oidc_enabled="$(printf '%s' "${DTRACK_OIDC_ENABLED:-false}" | tr '[:upper:]' '[:lower:]')"
 
-          chmod 600 "${OUT}"
-          test -s "${OUT}"
+          if [[ "${oidc_enabled}" == "true" ]]; then
+            : "${DTRACK_OIDC_ISSUER:?DTRACK_OIDC_ISSUER required when DTRACK_OIDC_ENABLED=true}"
+            : "${DTRACK_OIDC_CLIENT_ID:?DTRACK_OIDC_CLIENT_ID required when DTRACK_OIDC_ENABLED=true}"
 
-      - name: Install/upgrade Dependency-Track (official chart)
-        shell: bash
-        run: |
-          set -euo pipefail
+            ENV_FILE="${RUNNER_TEMP}/dtrack-frontend.env"
+            rm -f "${ENV_FILE}" || true
+            : > "${ENV_FILE}"
+            chmod 600 "${ENV_FILE}"
 
-          helm repo add dependency-track "${DTRACK_HELM_REPO_URL}"
-          helm repo update
+            printf 'OIDC_ISSUER=%s\n' "${DTRACK_OIDC_ISSUER}" >> "${ENV_FILE}"
+            printf 'OIDC_CLIENT_ID=%s\n' "${DTRACK_OIDC_CLIENT_ID}" >> "${ENV_FILE}"
 
-          EXTRA_HELM_FLAGS=""
-          if [[ "${DEBUG}" == "true" ]]; then
-            EXTRA_HELM_FLAGS="--debug"
+            if [[ -n "${DTRACK_OIDC_FLOW:-}" ]]; then
+              printf 'OIDC_FLOW=%s\n' "${DTRACK_OIDC_FLOW}" >> "${ENV_FILE}"
+            fi
+            if [[ -n "${DTRACK_OIDC_SCOPE:-}" ]]; then
+              printf 'OIDC_SCOPE=%s\n' "${DTRACK_OIDC_SCOPE}" >> "${ENV_FILE}"
+            fi
+            if [[ -n "${DTRACK_OIDC_LOGIN_BUTTON_TEXT:-}" ]]; then
+              printf 'OIDC_LOGIN_BUTTON_TEXT=%s\n' "${DTRACK_OIDC_LOGIN_BUTTON_TEXT}" >> "${ENV_FILE}"
+            fi
+
+            kubectl --namespace="${DTRACK_NAMESPACE}" create secret generic "${SECRET_NAME}" \
+              --from-env-file="${ENV_FILE}" \
+              --dry-run=client --output=yaml \
+              | kubectl apply --filename=-
+          else
+            # Keep the referenced secret present (empty) so Helm upgrades remain deterministic.
+            kubectl --namespace="${DTRACK_NAMESPACE}" create secret generic "${SECRET_NAME}" \
+              --dry-run=client --output=yaml \
+              | kubectl apply --filename=-
           fi
-
-          ATOMIC_FLAG="--atomic"
-          if [[ "${DEBUG}" == "true" ]]; then
-            # Helm --atomic will rollback/uninstall on failure, which can erase the very state we need
-            # to capture in the debug-artifacts job. In debug mode, preserve failed resources.
-            ATOMIC_FLAG=""
-            echo "DEBUG=true: disabling Helm --atomic to preserve failed resources for artifact capture."
-          fi
-
-          helm upgrade --install "${DTRACK_RELEASE_NAME}" dependency-track/dependency-track \
-            --namespace="${DTRACK_NAMESPACE}" \
-            --version="${DTRACK_CHART_VERSION}" \
-            --values="${RUNNER_TEMP}/values.generated.yaml" \
-            --wait ${ATOMIC_FLAG} --timeout="${HELM_TIMEOUT}" \
-            ${EXTRA_HELM_FLAGS}
-
-          kubectl --namespace="${DTRACK_NAMESPACE}" get pods --output=wide
-          kubectl --namespace="${DTRACK_NAMESPACE}" get svc --output=wide
-
-      - name: Post-deploy checks
-        shell: bash
-        run: |
-          set -euo pipefail
-          kubectl --namespace="${DTRACK_NAMESPACE}" get ingress -o wide || true
-          kubectl --namespace="${DTRACK_NAMESPACE}" get svc -o wide
-          kubectl --namespace="${DTRACK_NAMESPACE}" wait --for=condition=Ready pod \
-            -l app.kubernetes.io/component=api-server \
-            --timeout=5m || true
-          echo "Done."
-
-  debug-artifacts:
-    needs: [deploy]
-    if: ${{ always() && inputs.debug }}
-    runs-on: self-hosted
-    environment: ${{ inputs.environment }}
-    timeout-minutes: 30
-
-    env:
-      HELM_TIMEOUT: ${{ inputs.helm_timeout }}
-
-      USE_ADMIN_CREDENTIALS: ${{ inputs.use_admin_credentials }}
-
-      # Minimal set of vars (same resolution contract)
-      DEPLOY_CLIENT_ID: ${{ vars.DEPLOY_CLIENT_ID != '' && vars.DEPLOY_CLIENT_ID || secrets.DEPLOY_CLIENT_ID }}
-      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID != '' && vars.AZURE_TENANT_ID || secrets.AZURE_TENANT_ID }}
-      AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID != '' && vars.AZURE_SUBSCRIPTION_ID || secrets.AZURE_SUBSCRIPTION_ID }}
-      DEPLOY_SECRET: ${{ vars.DEPLOY_SECRET != '' && vars.DEPLOY_SECRET || secrets.DEPLOY_SECRET }}
-      AKS_RESOURCE_GROUP: ${{ vars.AKS_RESOURCE_GROUP != '' && vars.AKS_RESOURCE_GROUP || secrets.AKS_RESOURCE_GROUP }}
-      AKS_CLUSTER_NAME: ${{ vars.AKS_CLUSTER_NAME != '' && vars.AKS_CLUSTER_NAME || secrets.AKS_CLUSTER_NAME }}
-
-      REGISTRY_SERVER: ${{ vars.REGISTRY_SERVER != '' && vars.REGISTRY_SERVER || secrets.REGISTRY_SERVER }}
-      IMAGE_PULL_SECRET_NAME: ${{ (vars.IMAGE_PULL_SECRET_NAME != '' && vars.IMAGE_PULL_SECRET_NAME) || (secrets.IMAGE_PULL_SECRET_NAME != '' && secrets.IMAGE_PULL_SECRET_NAME) || 'nexus-pull' }}
-
-      DTRACK_NAMESPACE: ${{ (vars.DTRACK_NAMESPACE != '' && vars.DTRACK_NAMESPACE) || (secrets.DTRACK_NAMESPACE != '' && secrets.DTRACK_NAMESPACE) || 'dependency-track' }}
-      DTRACK_RELEASE_NAME: ${{ (vars.DTRACK_RELEASE_NAME != '' && vars.DTRACK_RELEASE_NAME) || (secrets.DTRACK_RELEASE_NAME != '' && secrets.DTRACK_RELEASE_NAME) || 'dependency-track' }}
-      DTRACK_HELM_REPO_URL: ${{ (vars.DTRACK_HELM_REPO_URL != '' && vars.DTRACK_HELM_REPO_URL) || (secrets.DTRACK_HELM_REPO_URL != '' && secrets.DTRACK_HELM_REPO_URL) || 'https://dependencytrack.github.io/helm-charts' }}
-      DTRACK_CHART_VERSION: ${{ (vars.DTRACK_CHART_VERSION != '' && vars.DTRACK_CHART_VERSION) || (secrets.DTRACK_CHART_VERSION != '' && secrets.DTRACK_CHART_VERSION) || '0.41.0' }}
-
-      DTRACK_INGRESS_HOST: ${{ (vars.DTRACK_INGRESS_HOST != '' && vars.DTRACK_INGRESS_HOST) || (secrets.DTRACK_INGRESS_HOST != '' && secrets.DTRACK_INGRESS_HOST) || 'dtrack.logiki.co.uk' }}
-      DTRACK_INGRESS_CLASS_NAME: ${{ (vars.DTRACK_INGRESS_CLASS_NAME != '' && vars.DTRACK_INGRESS_CLASS_NAME) || (secrets.DTRACK_INGRESS_CLASS_NAME != '' && secrets.DTRACK_INGRESS_CLASS_NAME) || 'traefik' }}
-      INGRESS_TLS_SECRET_NAME: ${{ (vars.INGRESS_TLS_SECRET_NAME != '' && vars.INGRESS_TLS_SECRET_NAME) || (secrets.INGRESS_TLS_SECRET_NAME != '' && secrets.INGRESS_TLS_SECRET_NAME) || 'dtrack-wildcard-tls' }}
-
-      DTRACK_APP_CONFIG_SECRET_NAME: ${{ (vars.DTRACK_APP_CONFIG_SECRET_NAME != '' && vars.DTRACK_APP_CONFIG_SECRET_NAME) || (secrets.DTRACK_APP_CONFIG_SECRET_NAME != '' && secrets.DTRACK_APP_CONFIG_SECRET_NAME) || 'dependency-track-app-config' }}
-      DTRACK_SECRET_KEY_EXISTING_SECRET_NAME: ${{ (vars.DTRACK_SECRET_KEY_EXISTING_SECRET_NAME != '' && vars.DTRACK_SECRET_KEY_EXISTING_SECRET_NAME) || (secrets.DTRACK_SECRET_KEY_EXISTING_SECRET_NAME != '' && secrets.DTRACK_SECRET_KEY_EXISTING_SECRET_NAME) || 'dtrack-secret-key' }}
-
-      DTRACK_APISERVER_IMAGE_REPOSITORY: ${{ (vars.DTRACK_APISERVER_IMAGE_REPOSITORY != '' && vars.DTRACK_APISERVER_IMAGE_REPOSITORY) || (secrets.DTRACK_APISERVER_IMAGE_REPOSITORY != '' && secrets.DTRACK_APISERVER_IMAGE_REPOSITORY) || 'dependencytrack/apiserver' }}
-      DTRACK_FRONTEND_IMAGE_REPOSITORY: ${{ (vars.DTRACK_FRONTEND_IMAGE_REPOSITORY != '' && vars.DTRACK_FRONTEND_IMAGE_REPOSITORY) || (secrets.DTRACK_FRONTEND_IMAGE_REPOSITORY != '' && secrets.DTRACK_FRONTEND_IMAGE_REPOSITORY) || 'dependencytrack/frontend' }}
-      DTRACK_APISERVER_IMAGE_TAG: ${{ (vars.DTRACK_APISERVER_IMAGE_TAG != '' && vars.DTRACK_APISERVER_IMAGE_TAG) || (secrets.DTRACK_APISERVER_IMAGE_TAG != '' && secrets.DTRACK_APISERVER_IMAGE_TAG) || '' }}
-      DTRACK_FRONTEND_IMAGE_TAG: ${{ (vars.DTRACK_FRONTEND_IMAGE_TAG != '' && vars.DTRACK_FRONTEND_IMAGE_TAG) || (secrets.DTRACK_FRONTEND_IMAGE_TAG != '' && secrets.DTRACK_FRONTEND_IMAGE_TAG) || '' }}
-      DTRACK_FRONTEND_API_BASE_URL: ${{ (vars.DTRACK_FRONTEND_API_BASE_URL != '' && vars.DTRACK_FRONTEND_API_BASE_URL) || (secrets.DTRACK_FRONTEND_API_BASE_URL != '' && secrets.DTRACK_FRONTEND_API_BASE_URL) || '' }}
-      DTRACK_INGRESS_ANNOTATIONS_JSON: ${{ (vars.DTRACK_INGRESS_ANNOTATIONS_JSON != '' && vars.DTRACK_INGRESS_ANNOTATIONS_JSON) || (secrets.DTRACK_INGRESS_ANNOTATIONS_JSON != '' && secrets.DTRACK_INGRESS_ANNOTATIONS_JSON) || '{}' }}
-
-      # ----------------------------------------------------------------------
-      # Optional: Dependency-Track OIDC connector configuration (app-level auth)
-      # Only rendered into Helm values when DTRACK_OIDC_ENABLED is "true".
-      # ----------------------------------------------------------------------
-
-      DTRACK_OIDC_ENABLED: ${{ (vars.DTRACK_OIDC_ENABLED != '' && vars.DTRACK_OIDC_ENABLED) || (secrets.DTRACK_OIDC_ENABLED != '' && secrets.DTRACK_OIDC_ENABLED) || 'false' }}
-      DTRACK_OIDC_ISSUER: ${{ (vars.DTRACK_OIDC_ISSUER != '' && vars.DTRACK_OIDC_ISSUER) || (secrets.DTRACK_OIDC_ISSUER != '' && secrets.DTRACK_OIDC_ISSUER) || '' }}
-      DTRACK_OIDC_CLIENT_ID: ${{ (vars.DTRACK_OIDC_CLIENT_ID != '' && vars.DTRACK_OIDC_CLIENT_ID) || (secrets.DTRACK_OIDC_CLIENT_ID != '' && secrets.DTRACK_OIDC_CLIENT_ID) || '' }}
-      DTRACK_OIDC_USER_CLAIM: ${{ (vars.DTRACK_OIDC_USER_CLAIM != '' && vars.DTRACK_OIDC_USER_CLAIM) || (secrets.DTRACK_OIDC_USER_CLAIM != '' && secrets.DTRACK_OIDC_USER_CLAIM) || 'preferred_username' }}
-      DTRACK_OIDC_USER_PROVISIONING: ${{ (vars.DTRACK_OIDC_USER_PROVISIONING != '' && vars.DTRACK_OIDC_USER_PROVISIONING) || (secrets.DTRACK_OIDC_USER_PROVISIONING != '' && secrets.DTRACK_OIDC_USER_PROVISIONING) || 'true' }}
-      DTRACK_OIDC_TEAM_SYNCHRONIZATION: ${{ (vars.DTRACK_OIDC_TEAM_SYNCHRONIZATION != '' && vars.DTRACK_OIDC_TEAM_SYNCHRONIZATION) || (secrets.DTRACK_OIDC_TEAM_SYNCHRONIZATION != '' && secrets.DTRACK_OIDC_TEAM_SYNCHRONIZATION) || 'true' }}
-      DTRACK_OIDC_TEAMS_CLAIM: ${{ (vars.DTRACK_OIDC_TEAMS_CLAIM != '' && vars.DTRACK_OIDC_TEAMS_CLAIM) || (secrets.DTRACK_OIDC_TEAMS_CLAIM != '' && secrets.DTRACK_OIDC_TEAMS_CLAIM) || 'groups' }}
-
-      DTRACK_APISERVER_PV_ENABLED: ${{ (vars.DTRACK_APISERVER_PV_ENABLED != '' && vars.DTRACK_APISERVER_PV_ENABLED) || (secrets.DTRACK_APISERVER_PV_ENABLED != '' && secrets.DTRACK_APISERVER_PV_ENABLED) || 'false' }}
-      DTRACK_APISERVER_PV_CLASSNAME: ${{ (vars.DTRACK_APISERVER_PV_CLASSNAME != '' && vars.DTRACK_APISERVER_PV_CLASSNAME) || (secrets.DTRACK_APISERVER_PV_CLASSNAME != '' && secrets.DTRACK_APISERVER_PV_CLASSNAME) || '' }}
-      DTRACK_APISERVER_PV_SIZE: ${{ (vars.DTRACK_APISERVER_PV_SIZE != '' && vars.DTRACK_APISERVER_PV_SIZE) || (secrets.DTRACK_APISERVER_PV_SIZE != '' && secrets.DTRACK_APISERVER_PV_SIZE) || '5Gi' }}
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Init runtime paths (AZURE_CONFIG_DIR, KUBECONFIG)
-        shell: bash
-        run: |
-          set -euo pipefail
-          umask 077
-          mkdir -p "${RUNNER_TEMP}/.azure"
-          echo "AZURE_CONFIG_DIR=${RUNNER_TEMP}/.azure" >> "${GITHUB_ENV}"
-          echo "KUBECONFIG=${RUNNER_TEMP}/kubeconfig" >> "${GITHUB_ENV}"
-
-      - name: Azure login (Service Principal + secret)
-        shell: bash
-        run: |
-          set -euo pipefail
-          rm -rf "${AZURE_CONFIG_DIR}" 2>/dev/null || true
-          mkdir -p "${AZURE_CONFIG_DIR}"
-          az logout --output=none 2>/dev/null || true
-          az account clear --output=none 2>/dev/null || true
-
-          az login \
-            --service-principal \
-            --username="${DEPLOY_CLIENT_ID}" \
-            --password="${DEPLOY_SECRET}" \
-            --tenant="${AZURE_TENANT_ID}" \
-            --output=none
-
-          az account set --subscription="${AZURE_SUBSCRIPTION_ID}"
-
-      - name: Get AKS credentials (Entra) + kubelogin convert
-        shell: bash
-        run: |
-          set -euo pipefail
-          umask 077
-
-          ADMIN_FLAG=""
-          if [[ "${USE_ADMIN_CREDENTIALS}" == "true" ]]; then
-            ADMIN_FLAG="--admin"
-          fi
-
-          az aks get-credentials \
-            --resource-group="${AKS_RESOURCE_GROUP}" \
-            --name="${AKS_CLUSTER_NAME}" \
-            --file="${KUBECONFIG}" \
-            ${ADMIN_FLAG} \
-            --overwrite-existing
-
-          kubelogin convert-kubeconfig \
-            --login="spn" \
-            --client-id="${DEPLOY_CLIENT_ID}" \
-            --client-secret="${DEPLOY_SECRET}" \
-            --tenant-id="${AZURE_TENANT_ID}" \
-            --kubeconfig="${KUBECONFIG}"
 
       - name: Render values.generated.yaml (debug artefact)
         shell: bash
@@ -688,6 +548,7 @@ jobs:
                     s/<DTRACK_INGRESS_CLASS_NAME>/$ENV{DTRACK_INGRESS_CLASS_NAME}/g;
                     s/<INGRESS_TLS_SECRET_NAME>/$ENV{INGRESS_TLS_SECRET_NAME}/g;
                     s/<DTRACK_APP_CONFIG_SECRET_NAME>/$ENV{DTRACK_APP_CONFIG_SECRET_NAME}/g;
+                    s/<DTRACK_FRONTEND_CONFIG_SECRET_NAME>/$ENV{DTRACK_FRONTEND_CONFIG_SECRET_NAME}/g;
                     s/<DTRACK_APISERVER_PV_ENABLED>/$ENV{DTRACK_APISERVER_PV_ENABLED}/g;
                     s/<DTRACK_APISERVER_PV_CLASSNAME>/$ENV{DTRACK_APISERVER_PV_CLASSNAME}/g;
                     s/<DTRACK_APISERVER_PV_SIZE>/$ENV{DTRACK_APISERVER_PV_SIZE}/g;
